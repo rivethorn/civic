@@ -1,0 +1,25 @@
+int __civic_string_length(String value);
+bool __civic_string_equals(String left, String right);
+bool __civic_string_contains(String value, String needle);
+bool __civic_string_starts_with(String value, String prefix);
+bool __civic_string_ends_with(String value, String suffix);
+
+int length(String value) {
+  return __civic_string_length(value);
+}
+
+bool equals(String left, String right) {
+  return __civic_string_equals(left, right);
+}
+
+bool contains(String value, String needle) {
+  return __civic_string_contains(value, needle);
+}
+
+bool starts_with(String value, String prefix) {
+  return __civic_string_starts_with(value, prefix);
+}
+
+bool ends_with(String value, String suffix) {
+  return __civic_string_ends_with(value, suffix);
+}

@@ -1,0 +1,14 @@
+import std.io;
+
+int main() {
+  int value = 5;
+  assert(value == 5);
+  assert(!(false && (1 / 0 == 0)));
+  assert(true || (1 / 0 == 0));
+  if (value > 4) {
+    println("greater");
+  } else {
+    println("not greater");
+  }
+  return 0;
+}

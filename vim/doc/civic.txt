@@ -1,0 +1,180 @@
+*civic.txt*     Civic Vim Plugin
+
+Civic vim/neovim plugin for the Civic programming language (.cv files).
+
+==============================================================================
+CONTENTS                                      *civic-contents*
+
+    1. Introduction .......................... |civic-intro|
+    2. Installation .......................... |civic-installation|
+    3. Commands .............................. |civic-commands|
+    4. Key Mappings .......................... |civic-mappings|
+    5. Configuration ......................... |civic-configuration|
+    6. LSP Integration ........................ |civic-lsp|
+    7. Syntax Highlighting ................... |civic-syntax|
+    8. Filetype Features ..................... |civic-ftfeatures|
+
+==============================================================================
+INTRODUCTION                                         *civic-intro*
+
+Civic is a compiled, LLVM-backed programming language with C-like syntax,
+classes/structs, RAII, smart pointers, and a headerless module system.
+This plugin provides syntax highlighting, smart indentation, CLI integration,
+and LSP support for Vim and Neovim.
+
+The plugin directory structure follows standard Vim runtime conventions:
+
+    vim/
+    ├── ftdetect/civic.vim    filetype detection
+    ├── ftplugin/civic.vim    filetype settings
+    ├── indent/civic.vim      indentation rules
+    ├── syntax/civic.vim      syntax highlighting
+    ├── plugin/civic.vim      commands and key mappings
+    ├── autoload/civic.vim    CLI helper functions
+    ├── autoload/civic/lsp.vim    LSP client management
+    ├── lua/civic/init.lua    Neovim LSP config (nvim-lspconfig)
+    └── doc/civic.txt         this help file
+
+==============================================================================
+INSTALLATION                                      *civic-installation*
+
+Using vim-plug:
+
+    Plug 'rivethorn/civic', { 'rtp': 'vim' }
+
+Using packer.nvim:
+
+    use { 'rivethorn/civic', rtp = 'vim' }
+
+Manual:
+
+    git clone https://github.com/rivethorn/civic.git
+    cd civic
+    mkdir -p ~/.vim/pack/civic/start
+    ln -s "$(pwd)/vim" ~/.vim/pack/civic/start/civic
+
+For Neovim LSP support, install nvim-lspconfig:
+
+    use 'neovim/nvim-lspconfig'
+
+For Vim LSP support, install vim-lsp:
+
+    Plug 'prabirsharma/vim-lsp'
+
+==============================================================================
+COMMANDS                                          *civic-commands*
+
+:CivicBuild *:CivicBuild*
+    Build the current project (if civic.toml is found) or the current .cv
+    file.  Compiler diagnostics are parsed into the quickfix window.
+
+:CivicRun *:CivicRun*
+    Build and run the current project or file in a terminal split.
+
+:CivicTest *:CivicTest*
+    Run the test suite (civic test).  Results are displayed in a
+    scratch buffer with PASS/FAIL highlighting.
+
+:CivicEmitIR *:CivicEmitIR*
+    Emit LLVM IR (civic emit-ir) and display it in a scratch buffer.
+
+:CivicCheck *:CivicCheck*
+    Quick syntax/semantic check using emit-ir.  Errors go to quickfix.
+
+:CivicNew *:CivicNew*
+    Create a new Civic project.  Prompts for a name.
+
+:CivicInfo *:CivicInfo*
+    Display plugin/executable/project information.
+
+:CivicLspStart *:CivicLspStart*
+    Start the Civic LSP server for the current buffer.
+
+:CivicLspStop *:CivicLspStop*
+    Stop the Civic LSP server.
+
+:CivicLspRestart *:CivicLspRestart*
+    Restart the Civic LSP server.
+
+==============================================================================
+KEY MAPPINGS                                      *civic-mappings*
+
+    <leader>cb    :CivicBuild
+    <leader>cr    :CivicRun
+    <leader>ct    :CivicTest
+    <leader>cc    :CivicCheck
+    <leader>ci    :CivicEmitIR
+    <leader>cl    :CivicLspStart
+    <leader>cI    :CivicInfo
+
+Disable: >
+
+    let g:civic_no_mappings = 1
+
+==============================================================================
+CONFIGURATION                                      *civic-configuration*
+
+g:civic_executable (string)
+    Override the path to the civic binary.
+
+        let g:civic_executable = "/usr/local/bin/civic"
+
+g:civic_no_mappings (boolean)
+    Set to 1 to disable all default key mappings.
+
+g:civic_auto_build (boolean)
+    Set to 1 to run :CivicCheck on every save of a .cv file.
+
+        let g:civic_auto_build = 1
+
+==============================================================================
+LSP INTEGRATION                                           *civic-lsp*
+
+Neovim (nvim-lspconfig) >
+    Add to init.lua:
+
+        require('civic').setup()
+
+    The server provides completion, hover, go-to-definition, and
+    diagnostics publishing.
+
+    Custom on_attach: >
+
+        require('civic').setup({
+          on_attach = function(client, bufnr)
+            vim.keymap.set('n', 'gd', vim.lsp.buf.definition, { buffer = bufnr })
+          end,
+        })
+
+Vim (vim-lsp) >
+    If vim-lsp is installed, `:CivicLspStart` will auto-register
+    and start the server.  No extra configuration needed.
+
+==============================================================================
+SYNTAX HIGHLIGHTING                                    *civic-syntax*
+
+    civicKeyword      → Keyword     (if, else, while, for, ...)
+    civicType         → Type        (void, int, String, vector, ...)
+    civicConstant     → Constant    (true, false)
+    civicBuiltIn      → Function    (print, println, assert, move)
+    civicModule       → Special     (std.io, std.core, ...)
+    civicComment      → Comment     (// ... and /* ... */)
+    civicString       → String      ("...")
+    civicNumber       → Number      (42, 3.14)
+    civicOperator     → Operator    (+, -, ==, &&, etc.)
+    civicDelimiter    → Delimiter   ({, }, (, ), ;, ,)
+    civicTodo         → Todo        (TODO, FIXME in comments)
+
+==============================================================================
+FILETYPE FEATURES                                    *civic-ftfeatures*
+
+Indentation:
+    Uses cindent with Civic-specific cinoptions for C-like blocks.
+
+Folding:
+    Syntax-based folding is enabled by default.
+
+Quickfix:
+    Errorformat is set for `path:line:col: error: message`.
+
+vim: ts=2 sw=2 tw=78 ft=help:

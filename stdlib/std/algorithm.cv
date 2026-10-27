@@ -1,0 +1,99 @@
+import std.math;
+
+int sum_range(int start, int end) {
+  if (end <= start) {
+    return 0;
+  }
+  int total = 0;
+  for (int value = start; value < end; value++) {
+    total += value;
+  }
+  return total;
+}
+
+int product_range(int start, int end) {
+  if (end <= start) {
+    return 1;
+  }
+  int product = 1;
+  for (int value = start; value < end; value++) {
+    product *= value;
+  }
+  return product;
+}
+
+int count_range(int start, int end) {
+  if (end <= start) {
+    return 0;
+  }
+  return end - start;
+}
+
+int sum_multiples(int start, int end, int divisor) {
+  if (divisor == 0 || end <= start) {
+    return 0;
+  }
+  int total = 0;
+  for (int value = start; value < end; value++) {
+    if (value % divisor == 0) {
+      total += value;
+    }
+  }
+  return total;
+}
+
+int count_if_even(int start, int end) {
+  if (end <= start) {
+    return 0;
+  }
+  int count = 0;
+  for (int value = start; value < end; value++) {
+    if (is_even(value)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+int count_multiples(int start, int end, int divisor) {
+  if (divisor == 0 || end <= start) {
+    return 0;
+  }
+  int count = 0;
+  for (int value = start; value < end; value++) {
+    if (value % divisor == 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+bool contains_range(int start, int end, int value) {
+  return value >= start && value < end;
+}
+
+int min_range(int start, int end) {
+  if (end <= start) {
+    return 0;
+  }
+  int result = start;
+  for (int value = start + 1; value < end; value++) {
+    if (value < result) {
+      result = value;
+    }
+  }
+  return result;
+}
+
+int max_range(int start, int end) {
+  if (end <= start) {
+    return 0;
+  }
+  int result = start;
+  for (int value = start + 1; value < end; value++) {
+    if (value > result) {
+      result = value;
+    }
+  }
+  return result;
+}

@@ -1,0 +1,8 @@
+import std.io;
+
+int main(int argc, String* args) {
+  assert(argc == 1);
+  assert(args[0] != "");
+  println("Hello");
+  return 0;
+}

@@ -1,0 +1,107 @@
+import std.math;
+
+int gcd(int left, int right) {
+  if (left < 0) {
+    left = -left;
+  }
+  if (right < 0) {
+    right = -right;
+  }
+  while (right != 0) {
+    int remainder = left % right;
+    left = right;
+    right = remainder;
+  }
+  return left;
+}
+
+int lcm(int left, int right) {
+  if (left == 0 || right == 0) {
+    return 0;
+  }
+  return abs(left / gcd(left, right) * right);
+}
+
+int pow_int(int base, int exponent) {
+  if (exponent < 0) {
+    return 0;
+  }
+  int result = 1;
+  while (exponent > 0) {
+    if (exponent % 2 == 1) {
+      result *= base;
+    }
+    exponent /= 2;
+    if (exponent > 0) {
+      base *= base;
+    }
+  }
+  return result;
+}
+
+int factorial(int value) {
+  if (value < 0) {
+    return 0;
+  }
+  int result = 1;
+  for (int factor = 2; factor <= value; factor++) {
+    result *= factor;
+  }
+  return result;
+}
+
+int triangular(int value) {
+  if (value < 0) {
+    return 0;
+  }
+  return value * (value + 1) / 2;
+}
+
+int fibonacci(int index) {
+  if (index < 0) {
+    return 0;
+  }
+  int previous = 0;
+  int current = 1;
+  for (int position = 0; position < index; position++) {
+    int next = previous + current;
+    previous = current;
+    current = next;
+  }
+  return previous;
+}
+
+int sqrt_int(int value) {
+  if (value <= 0) {
+    return 0;
+  }
+  int root = 0;
+  while (root + 1 <= value / (root + 1)) {
+    root++;
+  }
+  return root;
+}
+
+bool is_prime(int value) {
+  if (value < 2) {
+    return false;
+  }
+  for (int divisor = 2; divisor <= value / divisor; divisor++) {
+    if (value % divisor == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+int digit_sum(int value) {
+  if (value < 0) {
+    return 0;
+  }
+  int total = 0;
+  while (value > 0) {
+    total += value % 10;
+    value /= 10;
+  }
+  return total;
+}
