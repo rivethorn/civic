@@ -1,7 +1,6 @@
-# Civic — Vim/Neovim Plugin
+# Civic — Neovim Plugin
 
-Syntax highlighting, indentation, CLI integration, and LSP support for the
-**Civic** programming language (`.cv` files) in Vim and Neovim.
+Syntax highlighting, indentation, CLI integration, and LSP support for the **Civic** programming language (`.cv` files) in Neovim.
 
 ## Features
 
@@ -14,25 +13,28 @@ Syntax highlighting, indentation, CLI integration, and LSP support for the
 | **CLI commands** | `:CivicBuild`, `:CivicRun`, `:CivicTest`, `:CivicEmitIR`, `:CivicCheck`, `:CivicNew`, `:CivicInfo` |
 | **Quickfix integration** | Compiler diagnostics are automatically parsed into the quickfix window |
 | **Terminal integration** | `:CivicRun` opens a terminal split for live program output |
-| **LSP support** | Full LSP client integration via `nvim-lspconfig` (Neovim) or `vim-lsp` (Vim) |
+| **LSP support** | Full LSP client integration via `nvim-lspconfig` (Neovim only) |
 
 ## Installation
 
 ### Using a plugin manager
 
-**vim-plug:**
-```vim
-Plug 'rivethorn/civic', { 'rtp': 'vim' }
+**lazy.nvim:**
+```lua
+return {
+  "rivethorn/civic",
+  lazy = true,
+  ft = "civic"
+  config = function(plugin)
+    vim.opt.rtp:append(plugin.dir .. "/nvim")
+    require("civic").setup()
+  end,
+}
 ```
 
 **packer.nvim:**
 ```lua
-use { 'rivethorn/civic', rtp = 'vim' }
-```
-
-**lazy.nvim:**
-```lua
-{ 'rivethorn/civic', lazy = true, rtp = 'vim', ft = 'civic' }
+use { 'rivethorn/civic' }
 ```
 
 ### Manual installation
@@ -40,8 +42,8 @@ use { 'rivethorn/civic', rtp = 'vim' }
 ```sh
 git clone https://github.com/rivethorn/civic.git
 cd civic
-mkdir -p ~/.vim/pack/civic/start
-ln -s "$(pwd)/vim" ~/.vim/pack/civic/start/civic
+mkdir -p ~/.local/share/nvim/site/pack/civic/start
+ln -s "$(pwd)/vim" ~/.local/share/nvim/site/pack/civic/start/civic
 ```
 
 ### Neovim setup (Lua config)
@@ -53,21 +55,14 @@ After installing the plugin, add to your `init.lua`:
 require('civic').setup()
 ```
 
-Or start it manually:
+Or with custom options:
 
-```vim
-:CivicLspStart
+```lua
+require('civic').setup({
+  executable = '/usr/local/bin/civic',
+  on_attach = function(client, bufnr) ... end,
+})
 ```
-
-### Vim setup (vim-lsp)
-
-If using [vim-lsp](https://github.com/prabirsharma/vim-lsp):
-
-```vim
-"CivicLspStart will auto-register and start the server
-```
-
-No extra configuration is needed — the plugin auto-detects vim-lsp.
 
 ## Commands
 
@@ -99,58 +94,26 @@ All mappings are prefixed with `<leader>c`:
 | `<leader>cI` | `:CivicInfo` | Plugin info |
 
 Disable all mappings with:
-```vim
-let g:civic_no_mappings = 1
+
+```lua
+vim.g.civic_no_mappings = 1
 ```
 
 ## Configuration
 
-Set these in your `init.vim` or `init.lua` **before** loading the plugin:
+Set these in your `init.lua` **before** loading the plugin:
 
 | Variable | Default | Description |
 |---|---|---|
-| `g:civic_executable` | auto-detect | Override the path to the `civic` binary |
-| `g:civic_no_mappings` | 0 | Set to 1 to disable default key mappings |
-| `g:civic_auto_build` | 0 | Set to 1 to run `:CivicCheck` on every save of a `.cv` file |
+| `vim.g.civic_executable` | auto-detect | Override the path to the `civic` binary |
+| `vim.g.civic_no_mappings` | 0 | Set to 1 to disable default key mappings |
+| `vim.g.civic_auto_build` | 0 | Set to 1 to run `:CivicCheck` on every save of a `.cv` file |
 
-## Language Features Highlighted
-
-### Keywords
-```
-if  else  while  for  return  import  class  struct  public  private  template  typename  move
-```
-
-### Types
-```
-void  bool  char  int  float  double  String  vector  unique_ptr  shared_ptr  const
-```
-
-### Constants
-```
-true  false
-```
-
-### Built-in Functions
-```
-print  println  assert  move
-```
-
-### Standard Library Modules
-```
-std.io  std.core  std.math  std.numeric  std.string  std.algorithm
-```
-
-### Operators
-```
-+  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !  =  +=  -=  *=  /=  ++  --  .
-```
+Or pass them to `require('civic').setup({ ... })`.
 
 ## Project Detection
 
-The plugin automatically searches for `civic.toml` by walking up from the
-current file's directory. When found, all CLI commands operate in
-**project mode**. When no `civic.toml` is found, they fall back to
-**file mode** (operating on the current `.cv` file).
+The plugin automatically searches for `civic.toml` by walking up from the current file's directory. When found, all CLI commands operate in **project mode**. When no `civic.toml` is found, they fall back to **file mode** (operating on the current `.cv` file).
 
 ## Civic CLI Reference
 

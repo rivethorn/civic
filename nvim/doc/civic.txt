@@ -1,6 +1,8 @@
-*civic.txt*     Civic Vim Plugin
+*civic.txt*     Civic Neovim Plugin
 
-Civic vim/neovim plugin for the Civic programming language (.cv files).
+Civim neovim plugin for the Civic programming language (.cv files).
+Provides syntax highlighting, smart indentation, CLI integration,
+and LSP support for Neovim.
 
 ==============================================================================
 CONTENTS                                      *civic-contents*
@@ -12,7 +14,6 @@ CONTENTS                                      *civic-contents*
     5. Configuration ......................... |civic-configuration|
     6. LSP Integration ........................ |civic-lsp|
     7. Syntax Highlighting ................... |civic-syntax|
-    8. Filetype Features ..................... |civic-ftfeatures|
 
 ==============================================================================
 INTRODUCTION                                         *civic-intro*
@@ -20,46 +21,38 @@ INTRODUCTION                                         *civic-intro*
 Civic is a compiled, LLVM-backed programming language with C-like syntax,
 classes/structs, RAII, smart pointers, and a headerless module system.
 This plugin provides syntax highlighting, smart indentation, CLI integration,
-and LSP support for Vim and Neovim.
+and LSP support for Neovim.
 
-The plugin directory structure follows standard Vim runtime conventions:
+The plugin directory structure:
 
     vim/
     ├── ftdetect/civic.vim    filetype detection
-    ├── ftplugin/civic.vim    filetype settings
-    ├── indent/civic.vim      indentation rules
+    ├── lua/civic/init.lua    Neovim LSP config + CLI commands
+    ├── plugin/civic.vim      plugin entry point (loads Lua module)
     ├── syntax/civic.vim      syntax highlighting
-    ├── plugin/civic.vim      commands and key mappings
-    ├── autoload/civic.vim    CLI helper functions
-    ├── autoload/civic/lsp.vim    LSP client management
-    ├── lua/civic/init.lua    Neovim LSP config (nvim-lspconfig)
     └── doc/civic.txt         this help file
 
 ==============================================================================
 INSTALLATION                                      *civic-installation*
 
-Using vim-plug:
+Using lazy.nvim:
 
-    Plug 'rivethorn/civic', { 'rtp': 'vim' }
+    { 'rivethorn/civic', lazy = true, ft = 'civic' }
 
 Using packer.nvim:
 
-    use { 'rivethorn/civic', rtp = 'vim' }
+    use { 'rivethorn/civic' }
 
 Manual:
 
     git clone https://github.com/rivethorn/civic.git
     cd civic
-    mkdir -p ~/.vim/pack/civic/start
-    ln -s "$(pwd)/vim" ~/.vim/pack/civic/start/civic
+    mkdir -p ~/.local/share/nvim/site/pack/civic/start
+    ln -s "$(pwd)/vim" ~/.local/share/nvim/site/pack/civic/start/civic
 
 For Neovim LSP support, install nvim-lspconfig:
 
     use 'neovim/nvim-lspconfig'
-
-For Vim LSP support, install vim-lsp:
-
-    Plug 'prabirsharma/vim-lsp'
 
 ==============================================================================
 COMMANDS                                          *civic-commands*
@@ -107,7 +100,7 @@ KEY MAPPINGS                                      *civic-mappings*
     <leader>cl    :CivicLspStart
     <leader>cI    :CivicInfo
 
-Disable: >
+Disable:
 
     let g:civic_no_mappings = 1
 
@@ -130,25 +123,20 @@ g:civic_auto_build (boolean)
 ==============================================================================
 LSP INTEGRATION                                           *civic-lsp*
 
-Neovim (nvim-lspconfig) >
-    Add to init.lua:
+Neovim (nvim-lspconfig):
 
-        require('civic').setup()
+    require('civic').setup()
 
-    The server provides completion, hover, go-to-definition, and
-    diagnostics publishing.
+The server provides completion, hover, go-to-definition, and
+diagnostics publishing.
 
-    Custom on_attach: >
+Custom on_attach:
 
-        require('civic').setup({
-          on_attach = function(client, bufnr)
-            vim.keymap.set('n', 'gd', vim.lsp.buf.definition, { buffer = bufnr })
-          end,
-        })
-
-Vim (vim-lsp) >
-    If vim-lsp is installed, `:CivicLspStart` will auto-register
-    and start the server.  No extra configuration needed.
+    require('civic').setup({
+      on_attach = function(client, bufnr)
+        vim.keymap.set('n', 'gd', vim.lsp.buf.definition, { buffer = bufnr })
+      end,
+    })
 
 ==============================================================================
 SYNTAX HIGHLIGHTING                                    *civic-syntax*
@@ -164,17 +152,5 @@ SYNTAX HIGHLIGHTING                                    *civic-syntax*
     civicOperator     → Operator    (+, -, ==, &&, etc.)
     civicDelimiter    → Delimiter   ({, }, (, ), ;, ,)
     civicTodo         → Todo        (TODO, FIXME in comments)
-
-==============================================================================
-FILETYPE FEATURES                                    *civic-ftfeatures*
-
-Indentation:
-    Uses cindent with Civic-specific cinoptions for C-like blocks.
-
-Folding:
-    Syntax-based folding is enabled by default.
-
-Quickfix:
-    Errorformat is set for `path:line:col: error: message`.
 
 vim: ts=2 sw=2 tw=78 ft=help:
