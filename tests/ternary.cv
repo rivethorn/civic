@@ -1,0 +1,22 @@
+#include <std/io>
+
+int sign(int n) {
+  return if (n > 0) { 1 } else { -1 };
+}
+
+int main() {
+  int a = 5;
+  int b = 10;
+  int big = if (a > b) { a } else { b };
+  assert(big == 10);
+  int small = if (a < b) { a } else { b };
+  assert(small == 5);
+  int pick = if (a > b ? 1 : 0) { 1 } else { 0 };
+  assert(pick == 0);
+  int negative = sign(-7);
+  assert(negative == -1);
+  int nested = a > 0 ? (b > 0 ? 2 : 1) : 0;
+  assert(nested == 2);
+  println("ternary ok");
+  return 0;
+}

@@ -1,6 +1,6 @@
 *civic.txt*     Civic Neovim Plugin
 
-Civim neovim plugin for the Civic programming language (.cv files).
+Civic neovim plugin for the Civic programming language (.cv files).
 Provides syntax highlighting, smart indentation, CLI integration,
 and LSP support for Neovim.
 
@@ -19,69 +19,87 @@ CONTENTS                                      *civic-contents*
 INTRODUCTION                                         *civic-intro*
 
 Civic is a compiled, LLVM-backed programming language with C-like syntax,
-classes/structs, RAII, smart pointers, and a headerless module system.
-This plugin provides syntax highlighting, smart indentation, CLI integration,
-and LSP support for Neovim.
+classes/structs, RAII, smart pointers, and a header-based module system
+(`#include <header>`). This plugin provides syntax highlighting, smart
+indentation, CLI integration, and LSP support for Neovim.
 
 The plugin directory structure:
 
-    vim/
+    nvim/
     ├── ftdetect/civic.vim    filetype detection
-    ├── lua/civic/init.lua    Neovim LSP config + CLI commands
-    ├── plugin/civic.vim      plugin entry point (loads Lua module)
+    ├── ftplugin/civic.lua    buffer-local options and keymaps
+    ├── lua/civic/init.lua    async CLI commands + native LSP wiring
+    ├── lua/civic/util.lua    civic root / #include path resolution
+    ├── lua/civic/health.lua  :checkhealth civic
+    ├── plugin/civic.lua      plugin entry point (loads Lua module)
     ├── syntax/civic.vim      syntax highlighting
     └── doc/civic.txt         this help file
+
+All external commands run through |vim.system()| with argument lists and an
+explicit working directory: there are no shell strings in the plugin, and
+nothing is affected by the user's 'shell'.
 
 ==============================================================================
 INSTALLATION                                      *civic-installation*
 
 Using lazy.nvim:
 
-    { 'rivethorn/civic', lazy = true, ft = 'civic' }
+    { 'user/civic', lazy = true, ft = 'civic' }
 
 Using packer.nvim:
 
-    use { 'rivethorn/civic' }
+    use { 'user/civic' }
 
 Manual:
 
-    git clone https://github.com/rivethorn/civic.git
+    git clone https://github.com/user/civic.git
     cd civic
     mkdir -p ~/.local/share/nvim/site/pack/civic/start
-    ln -s "$(pwd)/vim" ~/.local/share/nvim/site/pack/civic/start/civic
+    ln -s "$(pwd)/nvim" ~/.local/share/nvim/site/pack/civic/start/civic
 
-For Neovim LSP support, install nvim-lspconfig:
+No third-party LSP plugins are required: the language server attaches through
+Neovim's native |vim.lsp.config()| and |vim.lsp.enable()| (Neovim 0.11+).
 
-    use 'neovim/nvim-lspconfig'
+Verify the installation with: >
+
+    :checkhealth civic
 
 ==============================================================================
 COMMANDS                                          *civic-commands*
 
-:CivicBuild *:CivicBuild*
+:CivicBuild [args] *:CivicBuild*
     Build the current project (if civic.toml is found) or the current .cv
-    file.  Compiler diagnostics are parsed into the quickfix window.
+    file.  Compiler diagnostics are parsed into the quickfix list with real
+    file:line:col entries.  Extra args (e.g. --release) are passed through.
 
-:CivicRun *:CivicRun*
-    Build and run the current project or file in a terminal split.
+:CivicRun [args] *:CivicRun*
+    Build and run the current project or file in a terminal split.  Args
+    before `--` go to civic run (e.g. --release); args after `--` are
+    forwarded to the program's argv.
 
-:CivicTest *:CivicTest*
+:CivicTest [paths] *:CivicTest*
     Run the test suite (civic test).  Results are displayed in a
-    scratch buffer with PASS/FAIL highlighting.
+    scratch buffer with PASS/FAIL highlighting; failures populate the
+    quickfix list.
 
 :CivicEmitIR *:CivicEmitIR*
-    Emit LLVM IR (civic emit-ir) and display it in a scratch buffer.
+    Emit LLVM IR (civic emit-ir) and display it in a scratch buffer with
+    llvm highlighting.
 
 :CivicCheck *:CivicCheck*
-    Quick syntax/semantic check using emit-ir.  Errors go to quickfix.
+    Quick syntax/semantic check using emit-ir (no binary is produced).
+    Errors go to quickfix; the compiler prints diagnostics with
+    file:line:col, so :cnext jumps straight to the problem.
 
-:CivicNew *:CivicNew*
-    Create a new Civic project.  Prompts for a name.
+:CivicNew [name] *:CivicNew*
+    Create a new Civic project.  Prompts for a name and opens the created
+    src/main.cv.
 
 :CivicInfo *:CivicInfo*
     Display plugin/executable/project information.
 
 :CivicLspStart *:CivicLspStart*
-    Start the Civic LSP server for the current buffer.
+    Start the Civic LSP server and attach it to open civic buffers.
 
 :CivicLspStop *:CivicLspStop*
     Stop the Civic LSP server.
@@ -92,17 +110,20 @@ COMMANDS                                          *civic-commands*
 ==============================================================================
 KEY MAPPINGS                                      *civic-mappings*
 
+All mappings are buffer-local to civic filetypes:
+
     <leader>cb    :CivicBuild
     <leader>cr    :CivicRun
     <leader>ct    :CivicTest
     <leader>cc    :CivicCheck
     <leader>ci    :CivicEmitIR
-    <leader>cl    :CivicLspStart
+    <leader>cl    :CivicLspRestart
     <leader>cI    :CivicInfo
 
 Disable:
 
     let g:civic_no_mappings = 1
+    " or in setup: require('civic').setup({ keymaps = false })
 
 ==============================================================================
 CONFIGURATION                                      *civic-configuration*
@@ -120,12 +141,24 @@ g:civic_auto_build (boolean)
 
         let g:civic_auto_build = 1
 
+setup() options (all override the g: variables):
+
+    require('civic').setup({
+      executable = nil,   -- override binary path
+      auto_lsp = true,    -- attach civic lsp to .cv buffers
+      auto_check = false, -- check after writing a .cv file
+      keymaps = true,     -- buffer-local <leader>c* mappings
+      open_quickfix = 'auto',  -- 'auto' | 'always' | 'never'
+      on_attach = nil,    -- function(client, bufnr) on every LSP attach
+    })
+
 ==============================================================================
 LSP INTEGRATION                                           *civic-lsp*
 
-Neovim (nvim-lspconfig):
+The language server attaches automatically for .cv buffers through Neovim's
+native LSP API:
 
-    require('civic').setup()
+    require('civic').setup()  -- auto_lsp = true by default
 
 The server provides completion, hover, go-to-definition, and
 diagnostics publishing.
@@ -138,19 +171,25 @@ Custom on_attach:
       end,
     })
 
+`gf` on an `#include <std/io>` line resolves the module name to its header
+file: the plugin looks in the stdlib of the Civic root (CIVIC_ROOT or the
+root resolved next to the executable), then next to the including file.
+
 ==============================================================================
 SYNTAX HIGHLIGHTING                                    *civic-syntax*
 
     civicKeyword      → Keyword     (if, else, while, for, ...)
-    civicType         → Type        (void, int, String, vector, ...)
+    civicType         → Type        (void, int, string, vector, ...)
     civicConstant     → Constant    (true, false)
     civicBuiltIn      → Function    (print, println, assert, move)
-    civicModule       → Special     (std.io, std.core, ...)
-    civicComment      → Comment     (// ... and /* ... */)
+    civicInclude      → PreProc     (#include <std/io>)
+    civicHeader       → PreProc     (#header io)
+    civicTodo         → Todo        (TODO, FIXME in comments)
+    civicLineComment  → Comment     (// ...)
+    civicBlockComment → Comment     (/* ... */)
     civicString       → String      ("...")
     civicNumber       → Number      (42, 3.14)
     civicOperator     → Operator    (+, -, ==, &&, etc.)
     civicDelimiter    → Delimiter   ({, }, (, ), ;, ,)
-    civicTodo         → Todo        (TODO, FIXME in comments)
 
 vim: ts=2 sw=2 tw=78 ft=help:

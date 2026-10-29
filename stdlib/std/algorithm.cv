@@ -1,4 +1,6 @@
-import std.math;
+#header algorithm
+
+#include <std/math>
 
 int sum_range(int start, int end) {
   if (end <= start) {

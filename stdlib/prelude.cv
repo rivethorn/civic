@@ -1,1 +1,2 @@
-import std.io;
+#header prelude
+#include <std/io>

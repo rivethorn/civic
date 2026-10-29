@@ -1,4 +1,6 @@
-import std.math;
+#header numeric
+
+#include <std/math>
 
 int gcd(int left, int right) {
   if (left < 0) {

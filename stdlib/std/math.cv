@@ -1,3 +1,5 @@
+#header math
+
 int abs(int value) {
   if (value < 0) {
     return -value;

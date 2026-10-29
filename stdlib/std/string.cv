@@ -1,25 +1,27 @@
-int __civic_string_length(String value);
-bool __civic_string_equals(String left, String right);
-bool __civic_string_contains(String value, String needle);
-bool __civic_string_starts_with(String value, String prefix);
-bool __civic_string_ends_with(String value, String suffix);
+#header string
 
-int length(String value) {
+int __civic_string_length(string value);
+bool __civic_string_equals(string left, string right);
+bool __civic_string_contains(string value, string needle);
+bool __civic_string_starts_with(string value, string prefix);
+bool __civic_string_ends_with(string value, string suffix);
+
+int length(string value) {
   return __civic_string_length(value);
 }
 
-bool equals(String left, String right) {
+bool equals(string left, string right) {
   return __civic_string_equals(left, right);
 }
 
-bool contains(String value, String needle) {
+bool contains(string value, string needle) {
   return __civic_string_contains(value, needle);
 }
 
-bool starts_with(String value, String prefix) {
+bool starts_with(string value, string prefix) {
   return __civic_string_starts_with(value, prefix);
 }
 
-bool ends_with(String value, String suffix) {
+bool ends_with(string value, string suffix) {
   return __civic_string_ends_with(value, suffix);
 }

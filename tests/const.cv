@@ -1,0 +1,19 @@
+#include <std/io>
+
+int scale(int factor) {
+  return factor * 3;
+}
+
+int main() {
+  const int limit = 10;
+  const string title = "Civic";
+  int const step = 2;
+  int total = 0;
+  for (int index = 0; index < limit; index += step) {
+    total += scale(index);
+  }
+  assert(total == 60);
+  assert(title == "Civic");
+  println(title, " total=", total);
+  return 0;
+}

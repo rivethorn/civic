@@ -1,283 +1,531 @@
--- lua/civic/init.lua — Civic plugin for Neovim (Lua only)
+-- lua/civic/init.lua — Civic toolchain integration for Neovim.
+--
+-- Design notes (v2 rewrite):
+--   * No shell strings: every external command runs through |vim.system()|
+--     with an argv table and an explicit working directory, so quoting and
+--     the user's $SHELL can never break a command line.
+--   * Everything is async; results land in the quickfix list or a scratch
+--     buffer, and the UI is only touched from the main loop.
+--   * The language server attaches automatically through |vim.lsp.config()|
+--     and |vim.lsp.enable()| (Neovim 0.11+); lspconfig is not required.
+--   * Buffer-local settings and keymaps live in ftplugin/civic.lua.
+
 local M = {}
 
-local cfg = {
-  executable = nil,
-  no_mappings = false,
-  auto_build = false,
+M.config = {
+  executable = nil,         -- override the `civic` binary; also vim.g.civic_executable
+  auto_lsp = true,          -- start `civic lsp` for .cv buffers
+  auto_check = vim.g.civic_auto_build == 1,  -- run CivicCheck on save of a .cv file
+  keymaps = vim.g.civic_no_mappings == nil or vim.g.civic_no_mappings == 0,
+  open_quickfix = 'auto',   -- 'auto' (only with errors) | 'always' | 'never'
 }
 
-local function exec()
-  if cfg.executable then return cfg.executable end
-  if vim.fn.executable('civic') == 1 then return 'civic' end
-  local p = vim.fn.exepath('civic')
-  return p ~= '' and p or nil
-end
-
-local function has_exec() return exec() ~= nil end
-
-local function find_root(start)
-  start = start or vim.api.nvim_buf_get_name(0)
-  if start == '' then start = vim.fn.getcwd() end
-  local dir = vim.fn.isdirectory(start) == 1 and start or vim.fn.fnamemodify(start, ':h')
-  while dir ~= '/' do
-    if vim.fn.filereadable(dir .. '/civic.toml') == 1 then return dir end
-    local p = vim.fn.fnamemodify(dir, ':h')
-    if p == dir then break end
-    dir = p
+--- Resolve the civic executable: config, then vim.g, then $PATH.
+function M.executable()
+  local configured = M.config.executable or vim.g.civic_executable
+  if type(configured) == 'string' and configured ~= '' then
+    return configured
+  end
+  if vim.fn.executable('civic') == 1 then
+    return vim.fn.exepath('civic')
   end
   return nil
 end
 
-local function cur_file() return vim.fn.expand('%:p') end
-
-local function run(cmd, cwd)
-  if cwd then cmd = 'cd ' .. vim.fn.shellescape(cwd) .. ' && ' .. cmd end
-  return vim.split(vim.fn.system(cmd), '\n')
+--- Project root for a buffer: nearest ancestor directory with civic.toml.
+function M.root(bufnr)
+  return vim.fs.root(bufnr or 0, 'civic.toml')
 end
 
-local function qf(output)
-  local e = {}
-  for _, l in ipairs(output) do
-    l = vim.trim(l)
-    if l ~= '' then
-      local t = 'E'
-      if l:match('[Ww]arning') then t = 'W' elseif l:match('[Nn]ote') then t = 'I' end
-      table.insert(e, { text = l, type = t })
+local function notify_error(msg)
+  vim.notify('civic: ' .. msg, vim.log.levels.ERROR)
+end
+
+-- ---------------------------------------------------------------------------
+-- Command execution
+-- ---------------------------------------------------------------------------
+
+-- Run `civic` with `args` (argv table). opts.cwd sets the working directory.
+-- on_exit(lines, code) receives merged stdout/stderr lines on the main loop.
+local function civic_run(args, opts, on_exit)
+  opts = opts or {}
+  local exe = M.executable()
+  if not exe then
+    notify_error('executable not found; set vim.g.civic_executable or config.executable')
+    return
+  end
+  local argv = { exe }
+  vim.list_extend(argv, args)
+  local sysopts = { text = true }
+  if opts.cwd then
+    sysopts.cwd = opts.cwd
+  end
+  local ok, obj = pcall(vim.system, argv, sysopts, function(out)
+    local lines = {}
+    for _, stream in ipairs({ out.stdout or '', out.stderr or '' }) do
+      for line in vim.gsplit(stream, '\n', { trimempty = true }) do
+        lines[#lines + 1] = line
+      end
+    end
+    vim.schedule(function()
+      on_exit(lines, out.code or -1)
+    end)
+  end)
+  if not ok then
+    vim.schedule(function()
+      on_exit({
+        ('failed to start %s: %s'):format(table.concat(argv, ' '), tostring(obj)),
+      }, 1)
+    end)
+  end
+end
+
+-- Compiler diagnostics look like: /path/file.cv:5:13: error: message
+local diagnostic_pattern = '^(.-):(%d+):(%d+): error: (.*)$'
+local fail_pattern = '^FAIL (.*)$'
+
+--- Fill the quickfix list from compiler output lines; returns the items.
+local function fill_quickfix(lines, title)
+  local items = {}
+  for _, line in ipairs(lines) do
+    local path, lnum, col, msg = line:match(diagnostic_pattern)
+    if path then
+      items[#items + 1] = {
+        filename = path,
+        lnum = tonumber(lnum),
+        col = tonumber(col),
+        text = msg,
+        type = 'E',
+      }
+    else
+      local failed = line:match(fail_pattern)
+      if failed then
+        -- "FAIL path (exit N)" or "FAIL path: error ..." — keep the path
+        local file = failed:match('^(%S+)') or failed
+        items[#items + 1] = { filename = file, lnum = 1, text = line, type = 'E' }
+      end
     end
   end
-  vim.fn.setqflist({}, ' ', e)
-  if #e > 0 then vim.cmd('copen') end
+  vim.fn.setqflist({}, 'r', { items = items, title = title or 'civic' })
+  return items
 end
 
-local function scratch(name, output, ft)
-  if vim.fn.bufexists(name) == 1 then vim.cmd('bdelete! ' .. name) end
-  vim.cmd('new ' .. name)
-  vim.api.nvim_buf_set_lines(0, 0, -1, false, output)
-  vim.bo[0].buftype = 'nofile'
-  vim.bo[0].bufhidden = 'hide'
-  vim.bo[0].noswapfile = true
-  vim.bo[0].readonly = true
-  vim.bo[0].filetype = ft
-  vim.keymap.set('n', 'q', ':q<CR>', { buffer = true, silent = true })
+local function maybe_open_quickfix(items)
+  local mode = M.config.open_quickfix
+  if mode == 'never' then
+    return
+  end
+  if mode == 'always' or #items > 0 then
+    vim.cmd('copen')
+  end
 end
 
-function M.build()
-  if not has_exec() then vim.notify('civic: executable not found', vim.log.levels.ERROR) return end
-  local root = find_root()
-  local cmd
-  if root then
-    cmd = exec() .. ' build --manifest-path ' .. vim.fn.shellescape(root .. '/civic.toml')
+-- ---------------------------------------------------------------------------
+-- Scratch output buffers
+-- ---------------------------------------------------------------------------
+
+--- Show `lines` in a reusable named scratch split. ft sets the filetype.
+local function scratch(name, lines, ft)
+  local buf = vim.fn.bufnr(name)
+  if buf == -1 then
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(buf, name)
+  end
+  vim.bo[buf].buftype = 'nofile'
+  vim.bo[buf].bufhidden = 'hide'
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  if ft then
+    vim.bo[buf].filetype = ft
+  end
+  -- Reuse a window already showing the buffer; otherwise a bottom split.
+  if vim.fn.win_findbuf(buf)[1] then
+    vim.api.nvim_set_current_win(vim.fn.win_findbuf(buf)[1])
   else
-    local f = cur_file()
-    if vim.fn.fnamemodify(f, ':e') ~= 'cv' then
-      vim.notify('civic build: not a .cv file', vim.log.levels.ERROR) return
-    end
-    cmd = exec() .. ' build ' .. vim.fn.shellescape(f)
+    vim.cmd('botright ' .. math.max(math.floor(vim.o.lines / 3), 8) .. 'split')
+    vim.api.nvim_win_set_buf(0, buf)
   end
-  local out = run(cmd, root or '')
-  qf(out)
-  for _, l in ipairs(out) do if l:match('error:') then return end end
-  vim.notify(root and 'built (project)' or 'built ' .. vim.fn.fnamemodify(cur_file(), ':t'))
+  vim.keymap.set('n', 'q', '<cmd>close<CR>', { buffer = buf, silent = true, desc = 'Close output' })
+  return buf
 end
 
-function M.run()
-  if not has_exec() then vim.notify('civic: executable not found', vim.log.levels.ERROR) return end
-  local root = find_root()
-  local args = root and { '--manifest-path', root .. '/civic.toml' } or { cur_file() }
-  if not root and vim.fn.fnamemodify(cur_file(), ':e') ~= 'cv' then
-    vim.notify('civic run: not a .cv file', vim.log.levels.ERROR) return
-  end
-  local cmd = exec() .. ' run'
-  for _, a in ipairs(args) do cmd = cmd .. ' ' .. vim.fn.shellescape(a) end
-  local cwd = root or ''
-  if cwd then cmd = 'cd ' .. vim.fn.shellescape(cwd) .. ' && ' .. cmd end
-  local h = math.max(math.floor(vim.fn.winheight(0) / 2), 10)
-  vim.cmd('botright ' .. h .. 'new')
-  vim.cmd('terminal ' .. cmd)
-  vim.bo[0].nonumber = true
-  vim.bo[0].relativenumber = false
-  vim.bo[0].buflisted = true
-  vim.bo[0].filetype = 'terminal'
-  vim.keymap.set('n', 'q', ':q<CR>', { buffer = true, silent = true })
-end
+-- ---------------------------------------------------------------------------
+-- Target resolution
+-- ---------------------------------------------------------------------------
 
-function M.test()
-  if not has_exec() then vim.notify('civic: executable not found', vim.log.levels.ERROR) return end
-  local root = find_root()
-  local out = run(exec() .. ' test', root or vim.fn.getcwd())
-  scratch('*Civic Test Output*', out, 'civic')
-  vim.fn.matchadd('CivicTestPass', 'PASS')
-  vim.fn.matchadd('CivicTestFail', 'FAIL')
-end
-
-function M.emit_ir()
-  if not has_exec() then vim.notify('civic: executable not found', vim.log.levels.ERROR) return end
-  local root = find_root()
-  local f
+-- Returns { cwd, target_args, label } for the current buffer:
+-- inside a project (civic.toml found) use the manifest, else the current file.
+local function target()
+  local root = M.root(0)
   if root then
-    f = root .. '/src/main.cv'
+    return {
+      cwd = root,
+      manifest_args = { '--manifest-path', root .. '/civic.toml' },
+      entry = root .. '/src/main.cv',
+      label = vim.fs.basename(root),
+    }
+  end
+  local file = vim.api.nvim_buf_get_name(0)
+  if file == '' or file:sub(-3) ~= '.cv' then
+    return nil
+  end
+  return { cwd = vim.fs.dirname(file), file = file, label = vim.fs.basename(file) }
+end
+
+local function require_target(action)
+  local t = target()
+  if not t then
+    notify_error(action .. ': open a .cv file or run inside a project')
+    return nil
+  end
+  return t
+end
+
+-- ---------------------------------------------------------------------------
+-- Commands
+-- ---------------------------------------------------------------------------
+
+function M.build(opts)
+  local t = require_target('build')
+  if not t then return end
+  local args = { 'build' }
+  if t.manifest_args then
+    vim.list_extend(args, t.manifest_args)
+    vim.list_extend(args, opts and opts.fargs or {})
   else
-    f = cur_file()
-    if vim.fn.fnamemodify(f, ':e') ~= 'cv' then
-      vim.notify('civic emit-ir: not a .cv file', vim.log.levels.ERROR) return
+    args[#args + 1] = t.file
+  end
+  civic_run(args, { cwd = t.cwd }, function(lines, code)
+    local items = fill_quickfix(lines, 'civic build')
+    if code == 0 then
+      vim.notify('civic: built ' .. t.label, vim.log.levels.INFO)
+    else
+      local detail = #items > 0 and (#items .. ' error(s)') or (lines[1] or 'unknown failure')
+      notify_error('build failed: ' .. detail)
+      maybe_open_quickfix(items)
+    end
+  end)
+end
+
+--- Split command-line args for `civic run`: everything after an explicit `--`
+--- (or everything, unless it is a known civic flag) goes to the program.
+local function split_run_args(fargs)
+  local cli_args, program_args, seen_separator = {}, {}, false
+  for _, arg in ipairs(fargs or {}) do
+    if arg == '--' then
+      seen_separator = true
+    elseif not seen_separator and arg == '--release' then
+      cli_args[#cli_args + 1] = arg
+    else
+      program_args[#program_args + 1] = arg
     end
   end
-  local out = run(exec() .. ' emit-ir ' .. vim.fn.shellescape(f), root or '')
-  scratch('*Civic LLVM IR*', out, 'llvm')
+  return cli_args, program_args
+end
+
+function M.run(opts)
+  local t = require_target('run')
+  if not t then return end
+  local exe = M.executable()
+  if not exe then
+    notify_error('executable not found; set vim.g.civic_executable')
+    return
+  end
+  local argv = { exe, 'run' }
+  local cli_args, program_args = split_run_args(opts and opts.fargs)
+  vim.list_extend(argv, cli_args)
+  if t.manifest_args then
+    vim.list_extend(argv, t.manifest_args)
+  else
+    argv[#argv + 1] = t.file
+  end
+  if #program_args > 0 then
+    argv[#argv + 1] = '--'
+    vim.list_extend(argv, program_args)
+  end
+  -- `:new` (not `:split`): termopen() reuses the current buffer, so we must
+  -- give it a *fresh* buffer or it would convert the source buffer itself.
+  vim.cmd('botright ' .. math.max(math.floor(vim.o.lines / 3), 8) .. 'new')
+  local buf = vim.api.nvim_get_current_buf()
+  local ok, err = pcall(vim.fn.termopen, argv, { cwd = t.cwd })
+  if not ok then
+    vim.api.nvim_buf_delete(buf, { force = true })
+    notify_error('failed to start terminal: ' .. tostring(err))
+    return
+  end
+  vim.bo[buf].buflisted = false
+  vim.bo[buf].filetype = 'civic-run'
+  vim.keymap.set('n', 'q', '<cmd>close<CR>', { buffer = buf, silent = true, desc = 'Close run output' })
+  vim.cmd('normal! G')
+  vim.cmd('startinsert!')
+end
+
+--- Working directory for `civic test`: tests/ are discovered relative to cwd,
+--- so prefer a directory that actually contains tests/ — the project root,
+--- then the current working directory, then the file's own directory.
+local function tests_cwd()
+  local t = target()
+  local candidates = {}
+  if t then
+    candidates[#candidates + 1] = t.cwd
+  end
+  candidates[#candidates + 1] = vim.fn.getcwd()
+  for _, dir in ipairs(candidates) do
+    if vim.fn.isdirectory(dir .. '/tests') == 1 then
+      return dir
+    end
+  end
+  return (t and t.cwd) or vim.fn.getcwd()
+end
+
+function M.test(opts)
+  local cwd = tests_cwd()
+  local args = { 'test' }
+  vim.list_extend(args, opts and opts.fargs or {})
+  civic_run(args, { cwd = cwd }, function(lines, code)
+    local items = fill_quickfix(lines, 'civic test')
+    scratch('civic://tests', lines, 'text')
+    -- scratch() leaves us in the output window; highlight PASS/FAIL there.
+    -- clearmatches() keeps repeated runs from stacking duplicate matches.
+    pcall(vim.fn.clearmatches)
+    pcall(vim.fn.matchadd, 'CivicTestPass', '\\<PASS\\>')
+    pcall(vim.fn.matchadd, 'CivicTestFail', '\\<FAIL\\>')
+    if code == 0 then
+      vim.notify('civic: all tests passed', vim.log.levels.INFO)
+    else
+      notify_error('tests failed')
+      maybe_open_quickfix(items)
+    end
+  end)
 end
 
 function M.check()
-  if not has_exec() then vim.notify('civic: executable not found', vim.log.levels.ERROR) return 1 end
-  local root = find_root()
-  local f
-  if root then
-    f = root .. '/src/main.cv'
-  else
-    f = cur_file()
-    if vim.fn.fnamemodify(f, ':e') ~= 'cv' then
-      vim.notify('civic check: not a .cv file', vim.log.levels.ERROR) return 1
-    end
+  local t = require_target('check')
+  if not t then return end
+  local source = t.file or t.entry
+  if vim.fn.filereadable(source) ~= 1 then
+    notify_error('check: entry point not found: ' .. source)
+    return
   end
-  local tmp = vim.fn.tempname()
-  local out = run(exec() .. ' emit-ir ' .. vim.fn.shellescape(f) .. ' -o ' .. vim.fn.shellescape(tmp), root or '')
-  if vim.fn.filereadable(tmp) == 1 then vim.fn.delete(tmp) end
-  qf(out)
-  for _, l in ipairs(out) do if l:match('error:') then return 1 end end
-  vim.notify('Civic: no errors')
-  return 0
+  local tmp = vim.fn.tempname() .. '.ll'
+  civic_run({ 'emit-ir', source, '-o', tmp }, { cwd = t.cwd }, function(lines, code)
+    pcall(vim.fn.delete, tmp)
+    local items = fill_quickfix(lines, 'civic check')
+    if code == 0 then
+      vim.notify('civic: no errors', vim.log.levels.INFO)
+    else
+      local detail = #items > 0 and (#items .. ' error(s)') or (lines[1] or 'unknown failure')
+      notify_error('check failed: ' .. detail)
+      maybe_open_quickfix(items)
+    end
+  end)
 end
 
-function M.new()
-  if not has_exec() then vim.notify('civic: executable not found', vim.log.levels.ERROR) return end
-  local name = vim.fn.input('Create Civic project: ', '', 'file')
-  if name == '' then vim.notify('cancelled') return end
-  local out = run(exec() .. ' new ' .. vim.fn.shellescape(name))
-  for _, l in ipairs(out) do vim.notify(l) end
-  local mf = vim.fn.fnamemodify(name, ':p') .. '/src/main.cv'
-  if vim.fn.filereadable(mf) == 1 then
-    vim.cmd('edit ' .. vim.fn.fnameescape(mf))
-    vim.notify('Opened ' .. mf)
+function M.emit_ir()
+  local t = require_target('emit-ir')
+  if not t then return end
+  local source = t.file or t.entry
+  if vim.fn.filereadable(source) ~= 1 then
+    notify_error('emit-ir: entry point not found: ' .. source)
+    return
   end
+  local tmp = vim.fn.tempname() .. '.ll'
+  civic_run({ 'emit-ir', source, '-o', tmp }, { cwd = t.cwd }, function(lines, code)
+    if code ~= 0 then
+      pcall(vim.fn.delete, tmp)
+      local items = fill_quickfix(lines, 'civic emit-ir')
+      notify_error('emit-ir failed (' .. #items .. ' error(s))')
+      maybe_open_quickfix(items)
+      return
+    end
+    local ir = vim.fn.readfile(tmp)
+    pcall(vim.fn.delete, tmp)
+    scratch('civic://ir', ir, 'llvm')
+  end)
+end
+
+function M.new(opts)
+  local name = opts and opts.args or ''
+  if name == '' then
+    name = vim.fn.input('New Civic project name: ')
+  end
+  if name == '' then
+    return
+  end
+  civic_run({ 'new', name }, { cwd = vim.fn.getcwd() }, function(lines, code)
+    if code ~= 0 then
+      notify_error('new failed: ' .. (lines[1] or 'unknown error'))
+      return
+    end
+    vim.notify(lines[#lines] or ('created project ' .. name), vim.log.levels.INFO)
+    local entry = vim.fs.joinpath(vim.fn.fnamemodify(name, ':p'), 'src', 'main.cv')
+    if vim.fn.filereadable(entry) == 1 then
+      vim.cmd('edit ' .. vim.fn.fnameescape(entry))
+    end
+  end)
 end
 
 function M.info()
-  local e = exec()
-  print('Civic Plugin Info')
-  print('')
-  print(e and ('Executable: ' .. e) or 'Executable: NOT FOUND')
-  if not e then print('  Install civic or set g:civic_executable') end
-  print('')
-  local root = find_root()
+  local exe = M.executable()
+  local lines = {
+    'Civic plugin info',
+    '',
+    exe and ('executable: ' .. exe) or 'executable: NOT FOUND (install civic or set vim.g.civic_executable)',
+    'CIVIC_ROOT: ' .. (vim.env.CIVIC_ROOT or '(unset)'),
+  }
+  local root = M.root(0)
   if root then
-    print('Project root: ' .. root)
+    lines[#lines + 1] = 'project root: ' .. root
     local manifest = root .. '/civic.toml'
     if vim.fn.filereadable(manifest) == 1 then
-      for _, l in ipairs(vim.fn.readfile(manifest)) do print('  ' .. l) end
+      lines[#lines + 1] = 'manifest:'
+      for _, l in ipairs(vim.fn.readfile(manifest)) do
+        lines[#lines + 1] = '  ' .. l
+      end
     end
   else
-    print('Project root: (none — no civic.toml found)')
+    lines[#lines + 1] = 'project root: (none — no civic.toml above this file)'
   end
+  local clients = vim.lsp.get_clients({ name = 'civic' })
+  lines[#lines + 1] = 'lsp clients: ' .. (#clients > 0 and #clients or 'none')
+  vim.notify(table.concat(lines, '\n'), vim.log.levels.INFO)
 end
 
-function M.lsp_start()
-  if not has_exec() then vim.notify('civic: executable not found', vim.log.levels.ERROR) return end
-  local root = find_root()
-  local root_dir = root or vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ':p:h')
-  local cap = vim.lsp.protocol.make_client_capabilities()
-  local conf = {
-    cmd = { exec(), 'lsp' },
+-- ---------------------------------------------------------------------------
+-- LSP
+-- ---------------------------------------------------------------------------
+
+local function lsp_config(exe)
+  return {
+    cmd = { exe, 'lsp' },
     filetypes = { 'civic' },
-    root_dir = root_dir,
-    capabilities = cap,
+    root_markers = { 'civic.toml' },
   }
-  local ok, lspconfig = pcall(require, 'lspconfig')
-  if ok then
-    if lspconfig.civic then
-      lspconfig.civic.setup(conf)
-    else
-      lspconfig.setup({ servers = { civic = conf } })
-    end
-  else
-    vim.lsp.start({ name = 'civic', cmd = conf.cmd, filetypes = conf.filetypes,
-      root_dir = conf.root_dir, capabilities = conf.capabilities })
-  end
-  vim.notify('Civic LSP started')
 end
 
 function M.lsp_stop()
   local clients = vim.lsp.get_clients({ name = 'civic' })
-  if #clients == 0 then print('Civic LSP: no active client')
-  else
-    for _, c in ipairs(clients) do c:stop() end
-    print('Civic LSP: stopped ' .. #clients .. ' client(s)')
+  for _, client in ipairs(clients) do
+    client:stop()
   end
+  vim.notify('civic: stopped ' .. #clients .. ' lsp client(s)', vim.log.levels.INFO)
+end
+
+--- (Re)apply the LSP config and attach to every already-open civic buffer.
+--- Complements vim.lsp.enable(), which only reacts to future FileType events.
+function M.lsp_start()
+  local exe = M.executable()
+  if not exe then
+    notify_error('executable not found; cannot start lsp')
+    return
+  end
+  if not (vim.lsp.config and vim.lsp.enable) then
+    notify_error('automatic LSP needs Neovim 0.11+')
+    return
+  end
+  vim.lsp.config.civic = lsp_config(exe)
+  vim.lsp.enable('civic') -- re-enables and re-fires FileType for open buffers
+  vim.notify('civic: lsp started', vim.log.levels.INFO)
 end
 
 function M.lsp_restart()
-  M.lsp_stop()
-  vim.defer_fn(M.lsp_start, 500)
+  local exe = M.executable()
+  if not exe then
+    notify_error('executable not found; cannot restart lsp')
+    return
+  end
+  for _, client in ipairs(vim.lsp.get_clients({ name = 'civic' })) do
+    client:stop()
+  end
+  -- Re-create the config (cmd may have changed) and re-enable.
+  vim.lsp.config.civic = lsp_config(exe)
+  vim.lsp.enable('civic')
+  vim.notify('civic: lsp restarted', vim.log.levels.INFO)
 end
 
-vim.api.nvim_create_autocmd('FileType', {
-  pattern = 'civic',
-  callback = function()
-    vim.bo.commentstring = '// %s'
-    vim.bo.comments = '://,:///,://!,b:/*,*:*,b:*/,://'
-    vim.bo.suffixes = '.cv'
-    vim.bo.include = '\\import'
-    vim.bo.suffixesadd = '.cv'
-    vim.bo.errorformat = '%f:%l:%c\\: error\\: %m'
-    vim.bo.iskeyword = '@,#,$,_,1-9,-,@'
-    vim.bo.matchpairs = '(:),{:},[:]'
-    vim.bo.autoindent = true
-    vim.bo.smartindent = true
-    vim.bo.expandtab = false
-    vim.bo.tabstop = 4
-    vim.bo.shiftwidth = 4
-    vim.bo.softtabstop = 4
-    vim.bo.foldmethod = 'syntax'
-    vim.bo.foldtext = ''
-    vim.bo.cindent = true
-    vim.bo.cinoptions = '>s,e-s,n-s'
-    vim.bo.indentexpr = ''
-    vim.bo.indentkeys = '0{,0},0),:,!^F,o,O,0='
-  end,
-})
+local function setup_lsp()
+  if not M.config.auto_lsp then
+    return
+  end
+  if not (vim.lsp.config and vim.lsp.enable) then
+    vim.notify_once(
+      'civic: automatic LSP needs Neovim 0.11+; run :CivicLspRestart manually',
+      vim.log.levels.WARN
+    )
+    return
+  end
+  local exe = M.executable()
+  if not exe then
+    return -- stay quiet at startup; :CivicInfo explains
+  end
+  vim.lsp.config.civic = lsp_config(exe)
+  vim.lsp.enable('civic')
+end
+
+--- Apply buffer-local options and keymaps; called from ftplugin/civic.lua.
+function M.buffer_setup(bufnr)
+  if M.config.keymaps then
+    local map = function(lhs, rhs, desc)
+      vim.keymap.set('n', lhs, rhs, { buffer = bufnr, silent = true, desc = desc })
+    end
+    map('<leader>cb', M.build, 'Civic: build')
+    map('<leader>cr', M.run, 'Civic: run')
+    map('<leader>ct', M.test, 'Civic: test')
+    map('<leader>cc', M.check, 'Civic: check')
+    map('<leader>ci', M.emit_ir, 'Civic: emit LLVM IR')
+    map('<leader>cl', M.lsp_restart, 'Civic: restart LSP')
+    map('<leader>cI', M.info, 'Civic: info')
+  end
+end
 
 function M.setup(opts)
-  opts = opts or {}
-  cfg.executable = opts.executable or vim.g.civic_executable or cfg.executable
-  cfg.no_mappings = opts.no_mappings ~= nil and opts.no_mappings or vim.g.civic_no_mappings or false
-  cfg.auto_build = opts.auto_build ~= nil and opts.auto_build or vim.g.civic_auto_build or false
+  M.config = vim.tbl_deep_extend('force', M.config, opts or {})
+  -- Mirror the bootstrap guard so plugin/civic.lua and a user-initiated
+  -- setup() agree on whether the plugin is live.
+  vim.g.loaded_civic = true
 
-  vim.api.nvim_create_user_command('CivicBuild', M.build, {})
-  vim.api.nvim_create_user_command('CivicRun', M.run, {})
-  vim.api.nvim_create_user_command('CivicTest', M.test, {})
-  vim.api.nvim_create_user_command('CivicEmitIR', M.emit_ir, {})
-  vim.api.nvim_create_user_command('CivicCheck', M.check, {})
-  vim.api.nvim_create_user_command('CivicNew', M.new, {})
-  vim.api.nvim_create_user_command('CivicInfo', M.info, {})
-  vim.api.nvim_create_user_command('CivicLspStart', M.lsp_start, {})
-  vim.api.nvim_create_user_command('CivicLspStop', M.lsp_stop, {})
-  vim.api.nvim_create_user_command('CivicLspRestart', M.lsp_restart, {})
-
-  if not cfg.no_mappings then
-    local map = function(k, cmd)
-      vim.keymap.set('n', '<leader>c' .. k, ':' .. cmd .. '<CR>', { silent = true })
-    end
-    map('b', 'CivicBuild')
-    map('r', 'CivicRun')
-    map('t', 'CivicTest')
-    map('c', 'CivicCheck')
-    map('i', 'CivicEmitIR')
-    map('I', 'CivicInfo')
-    map('l', 'CivicLspStart')
+  local group = vim.api.nvim_create_augroup('civic-plugin', { clear = true })
+  if type(M.config.on_attach) == 'function' then
+    vim.api.nvim_create_autocmd('LspAttach', {
+      group = group,
+      callback = function(ev)
+        local client = vim.lsp.get_client_by_id(ev.data.client_id)
+        if client and client.name == 'civic' then
+          pcall(M.config.on_attach, client, ev.buf)
+        end
+      end,
+    })
+  end
+  if M.config.auto_check then
+    vim.api.nvim_create_autocmd('BufWritePost', {
+      group = group,
+      pattern = '*.cv',
+      callback = function()
+        M.check() -- checks the buffer that was just written
+      end,
+    })
   end
 
-  if cfg.auto_build then
-    vim.api.nvim_create_autocmd('BufWritePost', { pattern = '*.cv', callback = M.check })
-  end
+  local command = vim.api.nvim_create_user_command
+  command('CivicBuild', M.build, { nargs = '*', desc = 'Build the Civic project or file' })
+  command('CivicRun', M.run, { nargs = '*', desc = 'Build and run (args are passed to the program)' })
+  command('CivicTest', M.test, { nargs = '*', desc = 'Run civic test' })
+  command('CivicCheck', M.check, { desc = 'Type-check without linking' })
+  command('CivicEmitIR', M.emit_ir, { desc = 'Show generated LLVM IR' })
+  command('CivicNew', M.new, { nargs = '?', desc = 'Create a new Civic project' })
+  command('CivicInfo', M.info, { desc = 'Show Civic plugin information' })
+  command('CivicLspStart', M.lsp_start, { desc = 'Start the Civic language server' })
+  command('CivicLspStop', M.lsp_stop, { desc = 'Stop the Civic language server' })
+  command('CivicLspRestart', M.lsp_restart, { desc = 'Restart the Civic language server' })
+
+  setup_lsp()
+  return M
 end
+
+-- Highlight groups for test output (defined early so ftplugin can rely on them).
+vim.api.nvim_set_hl(0, 'CivicTestPass', { link = 'DiagnosticOk', default = true })
+vim.api.nvim_set_hl(0, 'CivicTestFail', { link = 'DiagnosticError', default = true })
 
 return M

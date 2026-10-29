@@ -1,0 +1,11 @@
+#header
+
+#include <std/io>
+#include <std/math>
+
+int double_value(int value) {
+    println("from double");
+    int a = square(4);
+    println(a);
+    return value * 2;
+}

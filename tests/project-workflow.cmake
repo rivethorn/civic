@@ -60,9 +60,9 @@ endif()
 set(OVERRIDE_ROOT "${TEST_ROOT}/override-root")
 file(MAKE_DIRECTORY "${OVERRIDE_ROOT}/stdlib/std")
 file(WRITE "${OVERRIDE_ROOT}/stdlib/std/custom.cv"
-  "int custom_value() { return 73; }\n")
+  "#header custom\nint custom_value() { return 73; }\n")
 file(WRITE "${PROJECT_DIR}/src/main.cv"
-  "import std.custom;\nint main() { assert(custom_value() == 73); return 0; }\n")
+  "#include <std/custom>\nint main() { assert(custom_value() == 73); return 0; }\n")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env "CIVIC_ROOT=${OVERRIDE_ROOT}"
     "${CIVIC_EXECUTABLE}" run --manifest-path "${PROJECT_DIR}/civic.toml"
@@ -83,7 +83,7 @@ if(NOT EXISTS "${INSTALL_ROOT}/share/civic/.civic-root" OR
   message(FATAL_ERROR "install did not put root marker and standard library together")
 endif()
 file(WRITE "${PROJECT_DIR}/src/main.cv"
-  "import std.math;\nint main() { assert(abs(-73) == 73); return 0; }\n")
+  "#include <std/math>\nint main() { assert(abs(-73) == 73); return 0; }\n")
 execute_process(
   COMMAND "${INSTALL_ROOT}/bin/civic${CIVIC_EXECUTABLE_SUFFIX}" run
     --manifest-path "${PROJECT_DIR}/civic.toml"

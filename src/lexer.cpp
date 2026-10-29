@@ -119,7 +119,7 @@ std::vector<Token> Lexer::tokenize() const {
     }
 
     static const char* const operators[] = {
-        "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+=", "-=", "*=", "/="};
+        "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+=", "-=", "*=", "/=", "..=", ".."};
     bool matched = false;
     for (const char* op : operators) {
       std::string candidate(op);
@@ -132,7 +132,7 @@ std::vector<Token> Lexer::tokenize() const {
     }
     if (matched) continue;
 
-    static const std::string symbols = "{}();,.:<>+-*/%=!&|[]";
+    static const std::string symbols = "{}();,.:<>+-*/%=!&|[]#?";
     if (symbols.find(ch) != std::string::npos) {
       add(Token::Kind::Symbol, std::string(1, advance()), start);
       continue;

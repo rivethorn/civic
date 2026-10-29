@@ -1,11 +1,11 @@
-import std.io;
+#include <std/io>
 
 int main() {
-  int total = 0;
-  for (int index = 0; index < 4; index++) {
-    total += index;
-  }
-  assert(total == 6);
-  println("total=", total);
-  return 0;
+    int total = 0;
+    for (int index = 0; index < 4; index++) {
+        total += index;
+    }
+    assert(total == 6);
+    println("total=", total);
+    return 0;
 }

@@ -1,14 +1,24 @@
 " syntax/civic.vim — Civic syntax highlighting
-" Part of the Civic vim/neovim plugin
+" Part of the Civic vim/neovim plugin.
 "
-" Highlights keywords, types, constants, built-in functions, comments,
-" strings, numbers, operators, delimiters, and module imports.
-" All groups link to standard Vim highlight groups so they adapt to
-" the user's color scheme automatically.
+" Matches the header-based module system: `#include <std/io>` directives and
+" `#header` markers resolved by the compiler itself (no C preprocessor).
+" All groups link to standard Vim highlight groups so they adapt to the
+" user's color scheme automatically.
 
 if exists("b:current_syntax")
   finish
 endif
+
+" ---------------------------------------------------------------------------
+" Module directives
+"   #include <std/io>     include a stdlib or local header
+"   #header io            mark the current file as a header
+" ---------------------------------------------------------------------------
+syn match    civicInclude
+  \ "^#\s*include\s*<[^>]*>"
+syn match    civicHeader
+  \ "^#\s*header\%(\s\+\w\+\)\="
 
 " ---------------------------------------------------------------------------
 " Keywords — control flow and declarations
@@ -19,7 +29,10 @@ syn keyword  civicKeyword
   \ while
   \ for
   \ return
-  \ import
+  \ break
+  \ continue
+
+syn keyword  civicKeyword
   \ class
   \ struct
   \ public
@@ -39,6 +52,7 @@ syn keyword  civicType
   \ double
   \ const
   \ String
+  \ string
   \ vector
   \ unique_ptr
   \ shared_ptr
@@ -51,23 +65,19 @@ syn keyword  civicConstant
   \ false
 
 " ---------------------------------------------------------------------------
-" Built-in functions — always available or from std.io
-"   print, println   (from std.io)
+" Built-in functions
+"   print, println   (from <std/io>)
 "   assert           (always available)
 "   move             (move semantics, like std::move)
+"   make_unique, make_shared  (smart pointer construction)
 " ---------------------------------------------------------------------------
 syn keyword  civicBuiltIn
   \ print
   \ println
   \ assert
   \ move
-
-" ---------------------------------------------------------------------------
-" Standard library modules (used in import statements)
-" Matches: std.io, std.core, std.math, std.numeric, std.string, std.algorithm
-" ---------------------------------------------------------------------------
-syn match    civicModule
-  \ "\<std\.\(io\|core\|math\|numeric\|string\|algorithm\)\>"
+  \ make_unique
+  \ make_shared
 
 " ---------------------------------------------------------------------------
 " Comments — line and block (non-nesting, per spec)
@@ -78,12 +88,12 @@ syn keyword  civicTodo    TODO FIXME NOTE HACK XXX
 
 " Line comments:  // ...
 syn match    civicLineComment  "//.*$"
-            \ contains=@civicTodo
+            \ contains=civicTodo
             \ extend
 
 " Block comments:  /* ... */  (non-nesting)
 syn region   civicBlockComment  start="/\*"  end="\*/"
-            \ contains=@civicTodo
+            \ contains=civicTodo
             \ extend
 
 " ---------------------------------------------------------------------------
@@ -105,7 +115,7 @@ syn match    civicStringEscape     "\\[\"ntr\\]"
 " ---------------------------------------------------------------------------
 " Integers
 syn match    civicNumber          "\<\d\+\>"
-" Floats (digits on both sides of the decimal point)
+" Floats (digits on both sides of the decimal point, per spec)
 syn match    civicNumber          "\<\d\+\.\d\+\>"
 
 " ---------------------------------------------------------------------------
@@ -115,7 +125,7 @@ syn match    civicNumber          "\<\d\+\.\d\+\>"
 syn match    civicOperator
   \ "==\|!=\|<=\|>=\|&&\|||"
 syn match    civicOperator
-  \ "++\|--\|+=\|-=\|\*=\|/="
+  \ "++\|--\|+=\|-=\|\*=\|/=\|%="
 " Single-character operators
 syn match    civicOperator  "[+\-*/%&=|!<>]"
 
@@ -125,32 +135,22 @@ syn match    civicOperator  "[+\-*/%&=|!<>]"
 syn match    civicDelimiter    "[{}()\[\];,]"
 
 " ---------------------------------------------------------------------------
-" Optional syntax-based code folding
-" Set  let g:civic_folding = 1  in your vimrc to enable
-" ---------------------------------------------------------------------------
-if get(g:, 'civic_folding', 0)
-  syn region  civicFold  start='/\*\|{'  end='\*/\|}'
-            \ fold contains=@civicCluster
-  setlocal foldmethod=syntax
-  setlocal foldtext=
-endif
-
-" ---------------------------------------------------------------------------
 " Highlight group linking
 " ---------------------------------------------------------------------------
-hi def link civicKeyword         Keyword
-hi def link civicType            Type
-hi def link civicConstant        Constant
-hi def link civicBuiltIn         Function
-hi def link civicModule          Special
-hi def link civicTodo            Todo
-hi def link civicLineComment     Comment
-hi def link civicBlockComment    Comment
-hi def link civicString          String
-hi def link civicStringEscape    SpecialChar
-hi def link civicNumber          Number
-hi def link civicOperator        Operator
-hi def link civicDelimiter       Delimiter
+hi def link civicInclude        PreProc
+hi def link civicHeader         PreProc
+hi def link civicKeyword        Keyword
+hi def link civicType           Type
+hi def link civicConstant       Constant
+hi def link civicBuiltIn        Function
+hi def link civicTodo           Todo
+hi def link civicLineComment    Comment
+hi def link civicBlockComment   Comment
+hi def link civicString         String
+hi def link civicStringEscape   SpecialChar
+hi def link civicNumber         Number
+hi def link civicOperator       Operator
+hi def link civicDelimiter      Delimiter
 
 let b:current_syntax = "civic"
 

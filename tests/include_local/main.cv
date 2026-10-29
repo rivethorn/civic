@@ -1,0 +1,8 @@
+#include <util>
+#include <helper>
+
+int main() {
+    assert(double_value(4) == 8);
+    assert(triple_value(3) == 9);
+    return 0;
+}

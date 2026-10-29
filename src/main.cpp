@@ -27,6 +27,7 @@
 #include "sema.hpp"
 #include "codegen.hpp"
 #include "lsp.hpp"
+#include "version.hpp"
 
 #include "lexer.cpp"
 #include "parser.cpp"
@@ -363,8 +364,8 @@ int createProject(const fs::path& destination) {
             "[package]\nname = \"" + name + "\"\nversion = \"0.1.0\"\n");
   writeText(root / ".gitignore", "/target/\n");
   writeText(root / "src" / "main.cv",
-            "import std.io;\n\n"
-            "int main(int argc, String* argv) {\n"
+            "#include <std/io>\n\n"
+            "int main(int argc, string* argv) {\n"
             "  if (argc > 1) {\n"
             "    println(\"Hello, \", argv[1], \"!\");\n"
             "  } else {\n"
@@ -453,6 +454,10 @@ std::vector<fs::path> discoverTests(const std::vector<std::string>& requested) {
     }
     for (const auto& entry : fs::recursive_directory_iterator(root)) {
       if (entry.is_regular_file() && entry.path().extension() == ".cv") {
+        std::ifstream input(entry.path());
+        std::string firstLine;
+        std::getline(input, firstLine);
+        if (firstLine.rfind("#header", 0) == 0) continue;
         files.push_back(entry.path());
       }
     }
@@ -503,8 +508,10 @@ void usage(std::ostream& out) {
       << "  civic build <source.cv> [-o <output>]\n"
       << "  civic run <source.cv> [-- <args...>]\n"
       << "  civic test [file.cv|directory ...]\n"
+      << "  civic check <source.cv>\n"
       << "  civic emit-ir <source.cv> [-o <output.ll>]\n"
       << "  civic lsp  (Language Server Protocol over stdio)\n"
+      << "  civic --version\n"
       << "  CIVIC_ROOT may point to a Civic root containing stdlib/.\n";
 }
 
@@ -524,6 +531,10 @@ int main(int argc, char** argv) {
     return argc < 2 ? 2 : 0;
   }
   const std::string command = argv[1];
+  if (command == "--version" || command == "-v" || command == "version") {
+    std::cout << "civic " << civic::kCivicVersion << '\n';
+    return 0;
+  }
   if (command == "lsp") {
     if (argc != 2) {
       std::cerr << "civic lsp: does not accept command-line arguments\n";
@@ -549,6 +560,28 @@ int main(int argc, char** argv) {
                       standardLibraryPath);
     } catch (const std::exception& error) {
       std::cerr << "civic test: " << error.what() << '\n';
+      return 1;
+    }
+  }
+  if (command == "check") {
+    if (argc != 3 || fs::path(argv[2]).extension() != ".cv") {
+      std::cerr << "civic check: expected a single .cv source file\n";
+      return 2;
+    }
+    try {
+      fs::path sourcePath = fs::weakly_canonical(argv[2]);
+      // Use parseSourceText (not parseSourceFile) so #header files check as
+      // declaration-only modules without a main() requirement.
+      civic::Program program =
+          civic::parseSourceText(readText(sourcePath), sourcePath.string(),
+                                 standardLibraryPath.string());
+      civic::validateProgram(program, !program.isHeader);
+      return 0;
+    } catch (const civic::Diagnostic& diagnostic) {
+      printDiagnostic(diagnostic, fs::current_path() / argv[2]);
+      return 1;
+    } catch (const std::exception& error) {
+      std::cerr << "civic check: " << error.what() << '\n';
       return 1;
     }
   }

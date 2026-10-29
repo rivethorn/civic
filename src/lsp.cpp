@@ -258,7 +258,8 @@ JsonValue diagnosticsFor(const Document& document, const std::string& standardLi
   try {
     Program program = parseSourceText(document.text, document.path.string(),
                                       standardLibraryPath);
-    validateProgram(program);
+    // Header files declare API surface and never contain main().
+    validateProgram(program, !program.isHeader);
   } catch (const Diagnostic& diagnostic) {
     std::filesystem::path diagnosticPath = diagnostic.location.file.empty()
                                                ? document.path
@@ -281,7 +282,15 @@ JsonValue diagnosticsFor(const Document& document, const std::string& standardLi
       item["range"] = range(line, character, character + 1);
       item["severity"] = 1;
       item["source"] = "civic";
-      item["message"] = diagnostic.what();
+      std::string message = diagnostic.what();
+      // Attach a source snippet so the message is self-explanatory even outside
+      // the editor gutter.
+      if (!textLine.empty()) {
+        const size_t caretColumn = std::min(byteCharacter, textLine.size());
+        message += "\n\n" + std::string(textLine) + "\n" +
+                   std::string(caretColumn, ' ') + "^";
+      }
+      item["message"] = message;
       diagnostics.push_back(std::move(item));
     }
   } catch (const std::exception& error) {
@@ -310,15 +319,16 @@ void publishDiagnostics(const Document& document,
 JsonValue completionItems(const Document& document,
                           const std::string& standardLibraryPath) {
   std::map<std::string, std::pair<int, std::string>> items;
-  for (const std::string& keyword : {"import", "return", "if", "else", "while", "for"}) {
+  for (const std::string& keyword : {"include", "return", "if", "else", "while", "for"}) {
     items[keyword] = {14, "Civic keyword"};
   }
-  for (const std::string& type : {"int", "float", "double", "bool", "String", "void"}) {
+  for (const std::string& type : {"int", "float", "double", "bool", "string", "void"}) {
     items[type] = {25, "Civic type"};
   }
+  items["const"] = {14, "const — read-only qualifier for types"};
   items["assert"] = {3, "assert(bool | int) -> void"};
-  items["print"] = {3, "print(...values) -> void; requires import std.io"};
-  items["println"] = {3, "println(...values) -> void; requires import std.io"};
+  items["print"] = {3, "print(...values) -> void; requires #include <std/io>"};
+  items["println"] = {3, "println(...values) -> void; requires #include <std/io>"};
   try {
     Program program = parseSourceText(document.text, document.path.string(),
                                       standardLibraryPath);
@@ -369,11 +379,12 @@ JsonValue hoverResult(const Document& document, size_t line, size_t character,
     static const std::map<std::string, std::string> descriptions{
         {"int", "32-bit signed integer"}, {"float", "64-bit floating-point number"},
         {"double", "64-bit floating-point number"}, {"bool", "Boolean value"},
-        {"String", "String-literal-backed Civic string"},
+        {"string", "string-literal-backed Civic text value"},
+        {"const", "Marks a variable as read-only"},
         {"void", "No return value"},
         {"assert", "Terminates the program when its condition is false"},
-        {"print", "Prints values to standard output; requires import std.io"},
-        {"println", "Prints values followed by a newline; requires import std.io"}};
+        {"print", "Prints values to standard output; requires #include <std/io>"},
+        {"println", "Prints values followed by a newline; requires #include <std/io>"}};
     auto description = descriptions.find(token->text);
     if (description != descriptions.end()) contents = description->second;
   }
@@ -461,7 +472,7 @@ void handleMessage(JsonValue message, std::map<std::string, Document>& documents
     capabilities["definitionProvider"] = true;
     JsonObject serverInfo;
     serverInfo["name"] = "civic";
-    serverInfo["version"] = "0.1.0";
+    serverInfo["version"] = kCivicVersion;
     JsonObject result;
     result["capabilities"] = std::move(capabilities);
     result["serverInfo"] = std::move(serverInfo);
