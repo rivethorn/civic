@@ -16,6 +16,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -355,14 +356,73 @@ void publishDiagnostics(const Document& document,
 }
 
 JsonValue completionItems(const Document& document,
-						  const std::string& standardLibraryPath) {
+					  const std::string& standardLibraryPath,
+				  size_t line, size_t character) {
+	// Detect include context
+	std::string textUpToCursor;
+	{
+		std::istringstream stream(document.text);
+		std::string currentLine;
+		size_t currentLineNum = 0;
+		while (std::getline(stream, currentLine) && currentLineNum <= line) {
+			if (currentLineNum == line) {
+				if (character <= currentLine.size())
+					textUpToCursor += currentLine.substr(0, character);
+				else
+					textUpToCursor += currentLine;
+			} else {
+				textUpToCursor += currentLine + "\n";
+			}
+			++currentLineNum;
+		}
+	}
+	bool inInclude = false;
+	size_t includePos = textUpToCursor.rfind("#include");
+	if (includePos != std::string::npos) {
+		std::string afterInclude = textUpToCursor.substr(includePos);
+		size_t ltPos = afterInclude.find('<');
+		size_t gtPos = afterInclude.find('>');
+		if (ltPos != std::string::npos && (gtPos == std::string::npos || gtPos > ltPos))
+			inInclude = true;
+	}
+	if (inInclude) {
+		std::set<std::string> headers;
+		std::filesystem::path stdlibPath(standardLibraryPath);
+		std::error_code ec;
+		for (auto it = std::filesystem::recursive_directory_iterator(stdlibPath, ec);
+			 it != std::filesystem::recursive_directory_iterator(); ++it) {
+			if (it->is_regular_file() && it->path().extension() == ".cv") {
+				std::filesystem::path rel = it->path().lexically_relative(stdlibPath);
+				std::string headerPath = rel.string();
+				if (headerPath.size() > 3 && headerPath.substr(headerPath.size() - 3) == ".cv")
+					headerPath = headerPath.substr(0, headerPath.size() - 3);
+				std::replace(headerPath.begin(), headerPath.end(), '\\', '/');
+				headers.insert(headerPath);
+			}
+		}
+		std::filesystem::path sourceDir = document.path.parent_path();
+		for (auto it = std::filesystem::directory_iterator(sourceDir, ec);
+			 it != std::filesystem::directory_iterator(); ++it) {
+			if (it->is_regular_file() && it->path().extension() == ".cv")
+				headers.insert(it->path().stem().string());
+		}
+		llvm::json::Array result;
+		for (const auto& header : headers) {
+			JsonObject item;
+			item["label"] = header;
+			item["kind"] = 17;
+			item["detail"] = "Civic header";
+			result.push_back(std::move(item));
+		}
+		return result;
+	}
 	std::map<std::string, std::pair<int, std::string>> items;
 	for (const std::string& keyword :
 		 {"include", "return", "if", "else", "while", "for"}) {
 		items[keyword] = {14, "Civic keyword"};
 	}
 	for (const std::string& type :
-		 {"int", "float", "double", "bool", "string", "void"}) {
+		{"int", "uint", "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "float", "double", "bool", "string", "void"}) {
 		items[type] = {25, "Civic type"};
 	}
 	items["const"]	 = {14, "const — read-only qualifier for types"};
@@ -670,7 +730,7 @@ void handleMessage(JsonValue message,
 			0, integerProperty(positionObject, "character").value_or(0)));
 		const Document& document = documents.at(*uri);
 		if (*method == "textDocument/completion") {
-			sendResponse(*id, completionItems(document, standardLibraryPath));
+			sendResponse(*id, completionItems(document, standardLibraryPath, line, character));
 		} else if (*method == "textDocument/hover") {
 			sendResponse(*id, hoverResult(document, line, character,
 										  standardLibraryPath));
