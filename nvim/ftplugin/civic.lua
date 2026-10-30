@@ -28,6 +28,11 @@ vim.bo[bufnr].shiftwidth = 4
 vim.bo[bufnr].softtabstop = 4
 vim.bo[bufnr].expandtab = false
 
+-- 'gq' /=g fallback: the civic formatter itself (see also :CivicFmt).
+if vim.fn.executable('civic') == 1 then
+  vim.bo[bufnr].formatprg = 'civic fmt --stdin'
+end
+
 vim.bo[bufnr].iskeyword = '@,48-57,_,192-255,$'
 
 -- Undo local settings when the filetype changes away from civic.

@@ -6,4 +6,4 @@
 
 namespace civic {
 int runLanguageServer(const std::string& standardLibraryPath);
-}  // namespace civic
+} // namespace civic

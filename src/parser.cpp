@@ -673,9 +673,14 @@ private:
     if (peek().kind == Token::Kind::Identifier && peek().text == "const") ++afterType;
     if (peek(afterType).kind != Token::Kind::Identifier) return false;
     const std::string& first = peek(afterType).text;
-    bool knownType = first == "int" || first == "float" || first == "double" ||
-                     first == "bool" || first == "string" || first == "vector" ||
-                     first == "vec" || first == "map";
+    bool knownType = first == "int" || first == "uint" ||
+                     first == "i8" || first == "i16" || first == "i32" ||
+                     first == "i64" || first == "i128" ||
+                     first == "u8" || first == "u16" || first == "u32" ||
+                     first == "u64" || first == "u128" ||
+                     first == "float" || first == "double" ||
+                     first == "bool" || first == "string" ||
+                     first == "vector" || first == "vec" || first == "map";
     if (!knownType) return false;
     ++afterType;
     if (first == "vector" || first == "vec" || first == "map") {
@@ -1030,6 +1035,15 @@ Program parseSourceFile(const std::string& path, const std::string& standardLibr
   loadFromParsed(parsed, canonical, standardLibraryPath, program, loaded, std::nullopt, true, files);
   assignFunctionVisibility(program, files, canonical.string());
   return program;
+}
+ParsedFile parseFileText(const std::string& source, const std::string& name) {
+  Lexer lexer(source, name);
+  ParsedFile parsed;
+  parsed.tokens = lexer.tokenize();
+  parsed.comments = lexer.takeComments();
+  Parser parser(parsed.tokens);
+  parsed.program = parser.parse();
+  return parsed;
 }
 }  // namespace civic
 

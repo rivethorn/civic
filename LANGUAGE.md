@@ -28,8 +28,7 @@ string literals.
 
 string literals use double quotes and support `\\`, `\"`, `\n`, `\r`, and `\t`.
 An unescaped newline or end of file before the closing quote is an error.
-Integer literals are decimal and must fit the nonnegative range of `int`;
-`INT_MIN` can be formed by arithmetic. Floating literals contain a decimal
+Integer literals are decimal. Floating literals contain a decimal
 point and digits on both sides. Integer literals have type `int`; floating
 literals have type `double`. `true` and `false` are Boolean literals.
 
@@ -48,7 +47,10 @@ The primitive types are:
 | `void` | No value; valid only as a function result |
 | `bool` | `true` or `false` |
 | `char` | Unsigned 8-bit byte |
-| `int` | Signed 32-bit integer |
+| `int` | Signed pointer-sized integer (default integer type) |
+| `uint` | Unsigned pointer-sized integer |
+| `i8`, `i16`, `i32`, `i64`, `i128` | Signed integers of the given width |
+| `u8`, `u16`, `u32`, `u64`, `u128` | Unsigned integers of the given width |
 | `float`, `double` | IEEE-754 binary64 floating-point value |
 | `string` | UTF-8 text value |
 

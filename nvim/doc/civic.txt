@@ -179,7 +179,7 @@ root resolved next to the executable), then next to the including file.
 SYNTAX HIGHLIGHTING                                    *civic-syntax*
 
     civicKeyword      → Keyword     (if, else, while, for, ...)
-    civicType         → Type        (void, int, string, vector, ...)
+    civicType         → Type        (void, int, uint, i8..i128, u8..u128, string, vector, ...)
     civicConstant     → Constant    (true, false)
     civicBuiltIn      → Function    (print, println, assert, move)
     civicInclude      → PreProc     (#include <std/io>)

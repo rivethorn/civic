@@ -12,7 +12,18 @@ namespace civic {
 Type parseTypeName(const std::string& name, Location location) {
   std::string base = name;
   if (base.rfind("const ", 0) == 0) base = base.substr(6);
-  if (base == "int") return Type::I32;
+  if (base == "int") return Type::Isize;
+  if (base == "uint") return Type::Usize;
+  if (base == "i8") return Type::I8;
+  if (base == "i16") return Type::I16;
+  if (base == "i32") return Type::I32;
+  if (base == "i64") return Type::I64;
+  if (base == "i128") return Type::I128;
+  if (base == "u8") return Type::U8;
+  if (base == "u16") return Type::U16;
+  if (base == "u32") return Type::U32;
+  if (base == "u64") return Type::U64;
+  if (base == "u128") return Type::U128;
   if (base == "float" || base == "double") return Type::F64;
   if (base == "bool") return Type::Bool;
   if (base == "string") return Type::String;
@@ -31,6 +42,90 @@ Type parseTypeName(const std::string& name, Location location) {
 
 bool isConstTypeName(const std::string& name) {
   return name.rfind("const ", 0) == 0;
+}
+
+bool isIntegerType(Type type) {
+  switch (type) {
+  case Type::I8:
+  case Type::I16:
+  case Type::I32:
+  case Type::I64:
+  case Type::I128:
+  case Type::U8:
+  case Type::U16:
+  case Type::U32:
+  case Type::U64:
+  case Type::U128:
+  case Type::Isize:
+  case Type::Usize:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// Returns the bit width of an integer type, or 0 for non-integer types.
+int integerBitWidth(Type type) {
+  switch (type) {
+  case Type::I8:
+  case Type::U8:
+    return 8;
+  case Type::I16:
+  case Type::U16:
+    return 16;
+  case Type::I32:
+  case Type::U32:
+    return 32;
+  case Type::I64:
+  case Type::U64:
+    return 64;
+  case Type::I128:
+  case Type::U128:
+    return 128;
+  case Type::Isize:
+  case Type::Usize:
+    return 64;
+  default:
+    return 0;
+  }
+}
+
+// Checks whether an integer literal fits in the given integer type.
+bool literalFitsInType(const std::string& text, Type target) {
+  int width = integerBitWidth(target);
+  if (width == 0) return false;
+  bool isSigned = target == Type::I8 || target == Type::I16 ||
+                  target == Type::I32 || target == Type::I64 ||
+                  target == Type::I128 || target == Type::Isize;
+  bool negative = !text.empty() && text[0] == '-';
+  if (negative) {
+    if (!isSigned) return false; // unsigned can't hold negative
+    try {
+      long long value = std::stoll(text);
+      int64_t min = (width >= 64) ? INT64_MIN : -(int64_t(1) << (width - 1));
+      int64_t max = (width >= 64) ? INT64_MAX : (int64_t(1) << (width - 1)) - 1;
+      return value >= min && value <= max;
+    } catch (...) {
+      return false;
+    }
+  } else {
+    try {
+      unsigned long long value = std::stoull(text);
+      if (isSigned) {
+        if (width >= 64) return value <= (unsigned long long)INT64_MAX;
+        unsigned long long max = (1ULL << (width - 1)) - 1;
+        return value <= max;
+      } else {
+        if (width >= 64) return true; // u64/u128 can hold any unsigned long long
+        unsigned long long max = (width == 64) ? ~0ULL : ((1ULL << width) - 1);
+        return value <= max;
+      }
+    } catch (...) {
+      // Value too large for unsigned long long (e.g., i128 max)
+      // Accept if target is i128/u128
+      return width >= 128;
+    }
+  }
 }
 
 Type vectorElementType(const std::string& typeName, Location location) {
@@ -89,7 +184,7 @@ public:
       type.parameters = std::move(parameters);
       functions_.emplace(name, std::move(type));
     };
-    registerBuiltin("__civic_string_length", Type::I32, {Type::String});
+    registerBuiltin("__civic_string_length", Type::Isize, {Type::String});
     registerBuiltin("__civic_string_equals", Type::Bool, {Type::String, Type::String});
     registerBuiltin("__civic_string_contains", Type::Bool, {Type::String, Type::String});
     registerBuiltin("__civic_string_starts_with", Type::Bool, {Type::String, Type::String});
@@ -133,9 +228,9 @@ public:
       const FunctionType& mainFunction = mainIterator->second;
       const bool noArgs = mainFunction.parameters.empty();
       const bool cArgs = mainFunction.parameters.size() == 2 &&
-                        mainFunction.parameters[0] == Type::I32 &&
+                        mainFunction.parameters[0] == Type::Isize &&
                         mainFunction.parameters[1] == Type::StringPointer;
-      if (mainFunction.resultTypes() != std::vector<Type>{Type::I32} || (!noArgs && !cArgs)) {
+      if (mainFunction.resultTypes() != std::vector<Type>{Type::Isize} || (!noArgs && !cArgs)) {
         throw Diagnostic({1, 1}, "'main' must have signature int main() or int main(int, string*)");
       }
     } else if (requireMain_) {
@@ -170,16 +265,14 @@ private:
     switch (expression->kind) {
       case Expr::Kind::Integer:
         try {
-          long long value = std::stoll(expression->text);
-          if (value > std::numeric_limits<int32_t>::max()) {
-            throw Diagnostic(expression->location, "integer literal is outside the int range");
-          }
+          std::stoull(expression->text);
         } catch (const std::invalid_argument&) {
           throw Diagnostic(expression->location, "invalid integer literal");
         } catch (const std::out_of_range&) {
-          throw Diagnostic(expression->location, "integer literal is outside the int range");
+          // Large literals (e.g. i128) may exceed unsigned long long;
+          // accept them without range validation here.
         }
-        return Type::I32;
+        return Type::Isize;
       case Expr::Kind::Float: return Type::F64;
       case Expr::Kind::String: return Type::String;
       case Expr::Kind::Boolean: return Type::Bool;
@@ -189,13 +282,13 @@ private:
         const TypedVariable& variable =
             findVariable(expression->children[0]->text, expression->location);
         if (base == Type::Array) {
-          if (index != Type::I32) {
+          if (!isIntegerType(index)) {
             throw Diagnostic(expression->location, "array index must be an int");
           }
           return arrayElementType(variable.typeName, expression->location);
         }
         if (base == Type::Vector) {
-          if (index != Type::I32) {
+          if (!isIntegerType(index)) {
             throw Diagnostic(expression->location, "vector index must be an int");
           }
           return vectorElementType(variable.typeName, expression->location);
@@ -204,7 +297,7 @@ private:
           if (index == Type::String) {
             return mapValueType(variable.typeName, expression->location);
           }
-          if (index == Type::I32) {
+          if (isIntegerType(index)) {
             // Positional key access used by the for-in desugaring for maps.
             if (variable.typeName.empty()) {
               throw Diagnostic(expression->location,
@@ -214,7 +307,7 @@ private:
           }
           throw Diagnostic(expression->location, "map keys must be strings");
         }
-        if (base != Type::StringPointer || index != Type::I32) {
+        if (base != Type::StringPointer || !isIntegerType(index)) {
           throw Diagnostic(expression->location,
                            "indexing currently supports string* and int indices");
         }
@@ -251,7 +344,7 @@ private:
         if (expression->text == "++" || expression->text == "--" ||
             expression->text == "post++" || expression->text == "post--") {
           requireMutableVariable(expression->children[0]);
-          if (operand != Type::I32 && operand != Type::F64) {
+          if (!isIntegerType(operand) && operand != Type::F64) {
             throw Diagnostic(expression->location, "increment requires a numeric variable");
           }
           return operand;
@@ -260,7 +353,7 @@ private:
           requireConditionType(operand, expression->location);
           return Type::Bool;
         }
-        if (operand != Type::I32 && operand != Type::F64) {
+        if (!isIntegerType(operand) && operand != Type::F64) {
           throw Diagnostic(expression->location, "unary arithmetic requires a number");
         }
         return operand;
@@ -275,7 +368,25 @@ private:
           requireMutableVariable(expression->children[0]);
           Type lhs = expressionType(expression->children[0]);
           Type rhs = expressionType(expression->children[1]);
-          if (lhs != rhs) throw Diagnostic(expression->location, "assignment types do not match");
+          if (lhs != rhs) {
+            bool allowNarrow = false;
+            if (isIntegerType(lhs) && isIntegerType(rhs) &&
+                (expression->children[1]->kind == Expr::Kind::Integer ||
+                 (expression->children[1]->kind == Expr::Kind::Unary &&
+                  expression->children[1]->text == "-" &&
+                  expression->children[1]->children[0]->kind == Expr::Kind::Integer))) {
+              std::string text = expression->children[1]->text;
+              if (expression->children[1]->kind == Expr::Kind::Unary) {
+                text = "-" + expression->children[1]->children[0]->text;
+              }
+              if (literalFitsInType(text, lhs)) {
+                allowNarrow = true;
+              }
+            }
+            if (!allowNarrow) {
+              throw Diagnostic(expression->location, "assignment types do not match");
+            }
+          }
           if (expression->children[0]->kind == Expr::Kind::Index) {
             if (op != "=") {
               throw Diagnostic(expression->location,
@@ -283,7 +394,7 @@ private:
             }
             return lhs;
           }
-          if (op != "=" && lhs != Type::I32 && lhs != Type::F64) {
+          if (op != "=" && !isIntegerType(lhs) && lhs != Type::F64) {
             throw Diagnostic(expression->location, "compound assignment requires a number");
           }
           return lhs;
@@ -296,19 +407,19 @@ private:
           return Type::Bool;
         }
         if (op == "==" || op == "!=") {
-          if (lhs != rhs || (lhs != Type::I32 && lhs != Type::F64 &&
+          if (lhs != rhs || (!isIntegerType(lhs) && lhs != Type::F64 &&
                              lhs != Type::Bool && lhs != Type::String)) {
             throw Diagnostic(expression->location, "equality requires matching scalar or string values");
           }
           return Type::Bool;
         }
         if (op == "<" || op == "<=" || op == ">" || op == ">=") {
-          if (lhs != rhs || (lhs != Type::I32 && lhs != Type::F64)) {
+          if (lhs != rhs || (!isIntegerType(lhs) && lhs != Type::F64)) {
             throw Diagnostic(expression->location, "ordered comparison requires matching numbers");
           }
           return Type::Bool;
         }
-        if (lhs != rhs || (lhs != Type::I32 && lhs != Type::F64)) {
+        if (lhs != rhs || (!isIntegerType(lhs) && lhs != Type::F64)) {
           throw Diagnostic(expression->location, "arithmetic requires matching numeric operands");
         }
         return lhs;
@@ -391,7 +502,7 @@ private:
       if (!call->children.empty()) {
         throw Diagnostic(call->location, "size takes no arguments");
       }
-      return std::vector<Type>{Type::I32};
+      return std::vector<Type>{Type::Isize};
     }
     if (method == "at") {
       if (call->children.size() != 1) {
@@ -404,7 +515,7 @@ private:
         }
         return std::vector<Type>{mapValueType(typeName, call->location)};
       }
-      if (argument != Type::I32) {
+      if (!isIntegerType(argument)) {
         throw Diagnostic(call->children[0]->location, "collection index must be an int");
       }
       const Type element = isArray ? arrayElementType(typeName, call->location)
@@ -422,26 +533,75 @@ private:
         if (expressionType(call->children[0]) != Type::String) {
           throw Diagnostic(call->children[0]->location, "map keys must be strings");
         }
-        if (expressionType(call->children[1]) != mapValueType(typeName, call->location)) {
+        const Type mapValType = mapValueType(typeName, call->location);
+        if (expressionType(call->children[1]) != mapValType &&
+            !(isIntegerType(expressionType(call->children[1])) && isIntegerType(mapValType))) {
           throw Diagnostic(call->children[1]->location, "map value type does not match");
+        }
+        if (expressionType(call->children[1]) != mapValType &&
+            isIntegerType(expressionType(call->children[1])) && isIntegerType(mapValType) &&
+            call->children[1]->kind == Expr::Kind::Integer) {
+          if (!literalFitsInType(call->children[1]->text, mapValType)) {
+            throw Diagnostic(call->children[1]->location, "integer literal is outside the range of the target type");
+          }
+        }
+        if (expressionType(call->children[1]) != mapValType &&
+            isIntegerType(expressionType(call->children[1])) && isIntegerType(mapValType) &&
+            call->children[1]->kind == Expr::Kind::Unary && call->children[1]->text == "-" &&
+            call->children[1]->children[0]->kind == Expr::Kind::Integer) {
+          if (!literalFitsInType("-" + call->children[1]->children[0]->text, mapValType)) {
+            throw Diagnostic(call->children[1]->location, "integer literal is outside the range of the target type");
+          }
         }
         return std::vector<Type>{Type::Void};
       }
       const Type element = vectorElementType(typeName, call->location);
       if (call->children.size() == 1) {
-        if (expressionType(call->children[0]) != element) {
+        if (expressionType(call->children[0]) != element &&
+            !(isIntegerType(expressionType(call->children[0])) && isIntegerType(element))) {
           throw Diagnostic(call->children[0]->location, "inserted value type does not match the vector element type");
+        }
+        if (expressionType(call->children[0]) != element &&
+            isIntegerType(expressionType(call->children[0])) && isIntegerType(element) &&
+            call->children[0]->kind == Expr::Kind::Integer) {
+          if (!literalFitsInType(call->children[0]->text, element)) {
+            throw Diagnostic(call->children[0]->location, "integer literal is outside the range of the target type");
+          }
+        }
+        if (expressionType(call->children[0]) != element &&
+            isIntegerType(expressionType(call->children[0])) && isIntegerType(element) &&
+            call->children[0]->kind == Expr::Kind::Unary && call->children[0]->text == "-" &&
+            call->children[0]->children[0]->kind == Expr::Kind::Integer) {
+          if (!literalFitsInType("-" + call->children[0]->children[0]->text, element)) {
+            throw Diagnostic(call->children[0]->location, "integer literal is outside the range of the target type");
+          }
         }
         return std::vector<Type>{Type::Void};
       }
       if (call->children.size() != 2) {
         throw Diagnostic(call->location, "vector insert expects (value) or (index, value)");
       }
-      if (expressionType(call->children[0]) != Type::I32) {
+      if (!isIntegerType(expressionType(call->children[0]))) {
         throw Diagnostic(call->children[0]->location, "vector insert index must be an int");
       }
-      if (expressionType(call->children[1]) != element) {
+      if (expressionType(call->children[1]) != element &&
+          !(isIntegerType(expressionType(call->children[1])) && isIntegerType(element))) {
         throw Diagnostic(call->children[1]->location, "inserted value type does not match the vector element type");
+      }
+      if (expressionType(call->children[1]) != element &&
+          isIntegerType(expressionType(call->children[1])) && isIntegerType(element) &&
+          call->children[1]->kind == Expr::Kind::Integer) {
+        if (!literalFitsInType(call->children[1]->text, element)) {
+          throw Diagnostic(call->children[1]->location, "integer literal is outside the range of the target type");
+        }
+      }
+      if (expressionType(call->children[1]) != element &&
+          isIntegerType(expressionType(call->children[1])) && isIntegerType(element) &&
+          call->children[1]->kind == Expr::Kind::Unary && call->children[1]->text == "-" &&
+          call->children[1]->children[0]->kind == Expr::Kind::Integer) {
+        if (!literalFitsInType("-" + call->children[1]->children[0]->text, element)) {
+          throw Diagnostic(call->children[1]->location, "integer literal is outside the range of the target type");
+        }
       }
       return std::vector<Type>{Type::Void};
     }
@@ -450,7 +610,7 @@ private:
 
   Type analyzeSwitchExpression(const ExprPtr& expression) {
     Type subject = expressionType(expression->children[0]);
-    if (subject != Type::I32 && subject != Type::String) {
+    if (!isIntegerType(subject) && subject != Type::String) {
       throw Diagnostic(expression->location, "switch requires an int or string value");
     }
     std::unordered_set<long long> seenInts;
@@ -496,7 +656,7 @@ private:
                       (value->kind == Expr::Kind::Unary && value->text == "-" &&
                        value->children[0]->kind == Expr::Kind::Integer);
     const bool isString = value->kind == Expr::Kind::String;
-    const bool matches = subject == Type::String ? isString : subject == Type::I32 && isInt;
+    const bool matches = subject == Type::String ? isString : isIntegerType(subject) && isInt;
     if (!matches) {
       throw Diagnostic(location, "case label type does not match the switch value type");
     }
@@ -546,7 +706,7 @@ private:
   }
 
   static void requireConditionType(Type type, Location location) {
-    if (type != Type::Bool && type != Type::I32) {
+    if (type != Type::Bool && !isIntegerType(type)) {
       throw Diagnostic(location, "condition must be bool or int");
     }
   }
@@ -615,15 +775,35 @@ private:
           if (type == Type::Array && initializer->kind == Expr::Kind::ArrayLiteral) {
             const Type element = arrayElementType(statement->typeName, statement->location);
             for (const ExprPtr& entry : initializer->children) {
-              if (expressionType(entry) != element) {
+              if (expressionType(entry) != element && !(isIntegerType(expressionType(entry)) && isIntegerType(element))) {
                 throw Diagnostic(entry->location, "array element type does not match the declared element type");
+              }
+              if (expressionType(entry) != element && isIntegerType(expressionType(entry)) && isIntegerType(element) && entry->kind == Expr::Kind::Integer) {
+                if (!literalFitsInType(entry->text, element)) {
+                  throw Diagnostic(entry->location, "integer literal is outside the range of the target type");
+                }
+              }
+              if (expressionType(entry) != element && isIntegerType(expressionType(entry)) && isIntegerType(element) && entry->kind == Expr::Kind::Unary && entry->text == "-" && entry->children[0]->kind == Expr::Kind::Integer) {
+                if (!literalFitsInType("-" + entry->children[0]->text, element)) {
+                  throw Diagnostic(entry->location, "integer literal is outside the range of the target type");
+                }
               }
             }
           } else if (type == Type::Vector && initializer->kind == Expr::Kind::ArrayLiteral) {
             const Type element = vectorElementType(statement->typeName, statement->location);
             for (const ExprPtr& entry : initializer->children) {
-              if (expressionType(entry) != element) {
+              if (expressionType(entry) != element && !(isIntegerType(expressionType(entry)) && isIntegerType(element))) {
                 throw Diagnostic(entry->location, "vector element type does not match the declared element type");
+              }
+              if (expressionType(entry) != element && isIntegerType(expressionType(entry)) && isIntegerType(element) && entry->kind == Expr::Kind::Integer) {
+                if (!literalFitsInType(entry->text, element)) {
+                  throw Diagnostic(entry->location, "integer literal is outside the range of the target type");
+                }
+              }
+              if (expressionType(entry) != element && isIntegerType(expressionType(entry)) && isIntegerType(element) && entry->kind == Expr::Kind::Unary && entry->text == "-" && entry->children[0]->kind == Expr::Kind::Integer) {
+                if (!literalFitsInType("-" + entry->children[0]->text, element)) {
+                  throw Diagnostic(entry->location, "integer literal is outside the range of the target type");
+                }
               }
             }
           } else if (type == Type::Map && initializer->kind == Expr::Kind::MapLiteral) {
@@ -641,7 +821,22 @@ private:
               }
             }
           } else if (initializerType != type) {
-            throw Diagnostic(statement->location, "initializer type does not match variable type");
+            bool allowNarrow = isIntegerType(initializerType) && isIntegerType(type) &&
+              (initializer->kind == Expr::Kind::Integer ||
+               (initializer->kind == Expr::Kind::Unary && initializer->text == "-" &&
+                initializer->children[0]->kind == Expr::Kind::Integer));
+            if (allowNarrow) {
+              std::string text = initializer->text;
+              if (initializer->kind == Expr::Kind::Unary) {
+                text = "-" + initializer->children[0]->text;
+              }
+              if (!literalFitsInType(text, type)) {
+                allowNarrow = false;
+              }
+            }
+            if (!allowNarrow) {
+              throw Diagnostic(statement->location, "initializer type does not match variable type");
+            }
           }
         }
         const std::string storedTypeName = inferred ? "" : statement->typeName;
@@ -714,7 +909,7 @@ private:
         return;
       case Stmt::Kind::Switch: {
         Type subject = expressionType(statement->expression);
-        if (subject != Type::I32 && subject != Type::String) {
+        if (!isIntegerType(subject) && subject != Type::String) {
           throw Diagnostic(statement->location, "switch requires an int or string value");
         }
         std::unordered_set<long long> seenInts;

@@ -16,6 +16,7 @@ M.config = {
   executable = nil,         -- override the `civic` binary; also vim.g.civic_executable
   auto_lsp = true,          -- start `civic lsp` for .cv buffers
   auto_check = vim.g.civic_auto_build == 1,  -- run CivicCheck on save of a .cv file
+  format_on_save = false,   -- reformat the buffer before every save of a .cv file
   keymaps = vim.g.civic_no_mappings == nil or vim.g.civic_no_mappings == 0,
   open_quickfix = 'auto',   -- 'auto' (only with errors) | 'always' | 'never'
 }
@@ -323,6 +324,48 @@ function M.check()
   end)
 end
 
+--- Format the current .cv buffer with the canonical `civic fmt` layout.
+---
+--- Prefers the attached language server (works on unsaved contents, without
+--- a disk round trip); otherwise formats a temp snapshot of the buffer with
+--- the CLI and applies the result. Provides a `civic fmt` keymap fallback in
+--- either mode.
+function M.format(bufnr)
+  bufnr = bufnr or 0
+  local path = vim.api.nvim_buf_get_name(bufnr)
+  if path == '' or path:sub(-3) ~= '.cv' then
+    notify_error('fmt: the current buffer is not a .cv file')
+    return
+  end
+  -- 1) Language server: textDocument/formatting on the buffer contents.
+  for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr, name = 'civic' })) do
+    if client.supports_method and client:supports_method('textDocument/formatting') then
+      vim.lsp.buf.format({ bufnr = bufnr, async = false })
+      vim.notify('civic: formatted buffer (lsp)', vim.log.levels.INFO)
+      return
+    end
+  end
+  -- 2) CLI: format a temp copy of the buffer text and splice it back.
+  local exe = M.executable()
+  if not exe then
+    notify_error('executable not found; cannot format')
+    return
+  end
+  local tmp = vim.fn.tempname() .. '.cv'
+  vim.fn.writefile(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), tmp)
+  local out = vim.system({ exe, 'fmt', tmp }, { text = true }):wait()
+  local formatted = vim.fn.readfile(tmp)
+  pcall(vim.fn.delete, tmp)
+  if out.code ~= 0 then
+    notify_error('fmt failed: ' .. vim.trim(out.stderr or 'no output'))
+    return
+  end
+  local view = vim.fn.winsaveview()
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, formatted)
+  vim.fn.winrestview(view)
+  vim.notify('civic: formatted buffer', vim.log.levels.INFO)
+end
+
 function M.emit_ir()
   local t = require_target('emit-ir')
   if not t then return end
@@ -474,6 +517,7 @@ function M.buffer_setup(bufnr)
     map('<leader>cr', M.run, 'Civic: run')
     map('<leader>ct', M.test, 'Civic: test')
     map('<leader>cc', M.check, 'Civic: check')
+    map('<leader>cf', M.format, 'Civic: format')
     map('<leader>ci', M.emit_ir, 'Civic: emit LLVM IR')
     map('<leader>cl', M.lsp_restart, 'Civic: restart LSP')
     map('<leader>cI', M.info, 'Civic: info')
@@ -507,12 +551,25 @@ function M.setup(opts)
       end,
     })
   end
+  if M.config.format_on_save then
+    vim.api.nvim_create_autocmd('BufWritePre', {
+      group = group,
+      pattern = '*.cv',
+      callback = function()
+        -- Runs synchronously so the write lands on formatted text.
+        M.format()
+      end,
+    })
+  end
 
   local command = vim.api.nvim_create_user_command
   command('CivicBuild', M.build, { nargs = '*', desc = 'Build the Civic project or file' })
   command('CivicRun', M.run, { nargs = '*', desc = 'Build and run (args are passed to the program)' })
   command('CivicTest', M.test, { nargs = '*', desc = 'Run civic test' })
   command('CivicCheck', M.check, { desc = 'Type-check without linking' })
+  command('CivicFmt', function(opts)
+    M.format(opts and opts.fargs and tonumber(opts.fargs[1]) or 0)
+  end, { nargs = '?', desc = 'Format the buffer with civic fmt' })
   command('CivicEmitIR', M.emit_ir, { desc = 'Show generated LLVM IR' })
   command('CivicNew', M.new, { nargs = '?', desc = 'Create a new Civic project' })
   command('CivicInfo', M.info, { desc = 'Show Civic plugin information' })

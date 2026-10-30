@@ -1,0 +1,68 @@
+#include <std/io>
+
+// A standalone leading comment
+/* block comment
+   spanning lines */
+
+/* header-style trailing comment for the include */
+int twice(int value) {
+    return value * 2;
+}
+
+// sum with a trailing comment on the return
+int sum(int a, int b) {
+    return a + b; // inline trailing
+}
+
+int, int minmax(int a, int b) {
+    if (a < b) {
+        return a, b;
+    }
+    return b, a;
+}
+
+string classify(int value) {
+    switch (value) {
+        case 0: { return "zero"; }
+        case 1, 2: {
+            int doubled = value + value;
+            return "small";
+        }
+        default: { return "many"; }
+    }
+}
+
+int labelFor(int value) {
+    // keyword if expression
+    return if (value < 10) { 1 } else if (value < 100) { 2 } else { 3 };
+}
+
+int ternaryFor(int value) {
+    return value >= 10 ? value : 0;
+}
+
+int main() {
+    int negated = -(-5);
+    int series = 1 + 2;
+    assert(negated == 5);
+    println(twice(21)); // answer
+    println(sum(2, 3));
+    int low;
+    int high;
+    low, high = minmax(9, 4);
+    println(low, high);
+    println(classify(1));
+    println(labelFor(50));
+    println(ternaryFor(3), ternaryFor(12));
+    int[] values = [1, 2, 3];
+    map<string, int> counts = {"a": 1, "b": 2};
+    for value in values {
+        series += value;
+    }
+    for index in 0..=10 step 2 {
+        series += index;
+    }
+    assert(counts.size() == 2);
+    println(series, counts["b"]);
+    return 0;
+}

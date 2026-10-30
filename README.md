@@ -69,7 +69,7 @@ marks that test as failed.
 ## Current language subset
 
 The compiler currently supports functions, typed parameters and locals,
-multiple-return-value calls, `int`, `float`/`double`, `bool`,
+multiple-return-value calls, integer types (`int`, `uint`, `i8`..`i128`, `u8`..`u128`), `float`/`double`, `bool`,
 string-literal-backed `string`, arithmetic and comparison expressions,
 ternary `?:`, `if`/`switch` expressions, calls, `if`/`else`, `while`, C-style
 `for`, `for-in` over ranges and collections, built-in collections (`int[]` fixed arrays, `vec<T>` growable vectors,
