@@ -155,7 +155,7 @@ private:
 	}
 
 	void endLine(size_t extraIndent = 0) {
-		out_ << std::string((indent_ + extraIndent) * 4, ' ') << piece_ << '\n';
+		out_ << std::string(indent_ + extraIndent, '\t') << piece_ << '\n';
 		piece_.clear();
 		++linesWritten_;
 	}
@@ -168,11 +168,11 @@ private:
 	}
 
 	std::string indentString() const {
-		return std::string(indent_ * 4, ' ');
+		return std::string(indent_, '\t');
 	}
 
 	size_t column() const {
-		return indent_ * 4 + piece_.size();
+		return indent_ + piece_.size();
 	}
 
 	bool fits(size_t width) const {
@@ -535,7 +535,7 @@ private:
 	// continuation rows print at indent_ + depth.
 	bool fitsAt(size_t width, size_t depth, size_t followRoom = 0) const {
 		return width != kMultiline &&
-			   (indent_ + depth) * 4 + piece_.size() + width + followRoom <=
+			   (indent_ + depth) + piece_.size() + width + followRoom <=
 				   kWidth;
 	}
 

@@ -2,20 +2,21 @@
 #include <std/math>
 
 int sumTo(int limit) {
-    int total = 0;
-    for (int current = 1; current <= limit; current++) {
-        total += current;
-    }
-    return total;
+	int total = 0;
+	for (int current = 1; current <= limit; current++) {
+		total += current;
+	}
+
+	return total;
 }
 
 int main() {
-    string greeting = "Civic";
-    greeting = "Yo";
-    int result = sumTo(5) + square(2);
-    assert("same" == "same");
-    assert("different" != "same");
-    assert(result == 19);
-    println(greeting, " sum=", result);
-    return 0;
+	string greeting = "Civic";
+	greeting = "Yo";
+	int result = sumTo(5) + square(2);
+	assert("same" == "same");
+	assert("different" != "same");
+	assert(result == 19);
+	println(greeting, " sum=", result);
+	return 0;
 }
